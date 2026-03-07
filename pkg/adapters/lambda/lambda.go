@@ -12,12 +12,12 @@ import (
 )
 
 // ToLambdaHandler converts a *gotrpc.Router into an AWS Lambda handler function
-// compatible with API Gateway v2 (HTTP API) and Lambda Function URLs.
-func ToLambdaHandler(r *gotrpc.Router) func(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
-	return func(ctx context.Context, apiReq events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+// compatible with Lambda Function URLs and API Gateway v2 (HTTP API).
+func ToLambdaHandler(r *gotrpc.Router) func(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+	return func(ctx context.Context, apiReq events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 		httpReq, err := toHTTPRequest(ctx, apiReq)
 		if err != nil {
-			return events.APIGatewayProxyResponse{StatusCode: 500, Body: `{"error":"failed to convert request"}`}, nil
+			return events.APIGatewayV2HTTPResponse{StatusCode: 500, Body: `{"error":"failed to convert request"}`}, nil
 		}
 
 		rec := httptest.NewRecorder()
@@ -32,17 +32,15 @@ func Start(r *gotrpc.Router) {
 	lambda.Start(ToLambdaHandler(r))
 }
 
-func toHTTPRequest(ctx context.Context, apiReq events.APIGatewayProxyRequest) (*http.Request, error) {
-	url := apiReq.Path
-	if len(apiReq.QueryStringParameters) > 0 {
-		params := make([]string, 0, len(apiReq.QueryStringParameters))
-		for k, v := range apiReq.QueryStringParameters {
-			params = append(params, k+"="+v)
-		}
-		url += "?" + strings.Join(params, "&")
+func toHTTPRequest(ctx context.Context, apiReq events.APIGatewayV2HTTPRequest) (*http.Request, error) {
+	url := apiReq.RawPath
+	if apiReq.RawQueryString != "" {
+		url += "?" + apiReq.RawQueryString
 	}
 
-	req, err := http.NewRequestWithContext(ctx, apiReq.HTTPMethod, url, strings.NewReader(apiReq.Body))
+	method := apiReq.RequestContext.HTTP.Method
+
+	req, err := http.NewRequestWithContext(ctx, method, url, strings.NewReader(apiReq.Body))
 	if err != nil {
 		return nil, err
 	}
@@ -54,12 +52,12 @@ func toHTTPRequest(ctx context.Context, apiReq events.APIGatewayProxyRequest) (*
 	return req, nil
 }
 
-func toAPIGatewayResponse(rec *httptest.ResponseRecorder) events.APIGatewayProxyResponse {
+func toAPIGatewayResponse(rec *httptest.ResponseRecorder) events.APIGatewayV2HTTPResponse {
 	headers := make(map[string]string, len(rec.Header()))
 	for k, v := range rec.Header() {
 		headers[k] = strings.Join(v, ",")
 	}
-	return events.APIGatewayProxyResponse{
+	return events.APIGatewayV2HTTPResponse{
 		StatusCode: rec.Code,
 		Headers:    headers,
 		Body:       rec.Body.String(),

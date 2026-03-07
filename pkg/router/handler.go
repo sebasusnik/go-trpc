@@ -3,6 +3,7 @@ package router
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,18 +18,10 @@ type trpcResult struct {
 }
 
 type trpcData struct {
-	Data trpcJSON `json:"data"`
-}
-
-type trpcJSON struct {
-	JSON interface{} `json:"json"`
+	Data interface{} `json:"data"`
 }
 
 type trpcError struct {
-	JSON trpcErrorJSON `json:"json"`
-}
-
-type trpcErrorJSON struct {
 	Message string        `json:"message"`
 	Code    int           `json:"code"`
 	Data    trpcErrorData `json:"data"`
@@ -39,13 +32,6 @@ type trpcErrorData struct {
 	HTTPStatus int    `json:"httpStatus"`
 	Path       string `json:"path"`
 }
-
-// tRPC input wrappers.
-type trpcInputWrapper struct {
-	JSON json.RawMessage `json:"json"`
-}
-
-type trpcBatchInput map[string]trpcInputWrapper
 
 // ServeHTTP implements http.Handler.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -68,6 +54,8 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Check for batch
 	isBatch := req.URL.Query().Get("batch") == "1"
 
+	log.Printf("[trpc] %s %s (batch=%v)\n", req.Method, path, isBatch)
+
 	switch req.Method {
 	case http.MethodGet:
 		r.handleQuery(w, req, path, isBatch)
@@ -82,7 +70,7 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request, path stri
 	if isBatch {
 		names := strings.Split(path, ",")
 		inputRaw := req.URL.Query().Get("input")
-		var batchInput trpcBatchInput
+		var batchInput map[string]json.RawMessage
 		if inputRaw != "" {
 			if err := json.Unmarshal([]byte(inputRaw), &batchInput); err != nil {
 				writeErrorResponse(w, trpcerrors.ErrParseError, "failed to parse batch input", http.StatusBadRequest, path)
@@ -91,8 +79,8 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request, path stri
 		}
 		r.handleBatch(w, req, names, func(i int) []byte {
 			idx := strconv.Itoa(i)
-			if wrapper, ok := batchInput[idx]; ok {
-				return wrapper.JSON
+			if raw, ok := batchInput[idx]; ok {
+				return raw
 			}
 			return nil
 		})
@@ -103,15 +91,12 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request, path stri
 	inputRaw := req.URL.Query().Get("input")
 	var inputJSON []byte
 	if inputRaw != "" {
-		var wrapper trpcInputWrapper
-		if err := json.Unmarshal([]byte(inputRaw), &wrapper); err != nil {
-			writeErrorResponse(w, trpcerrors.ErrParseError, "failed to parse input", http.StatusBadRequest, path)
-			return
-		}
-		inputJSON = wrapper.JSON
+		inputJSON = []byte(inputRaw)
 	}
+	log.Printf("[trpc] query %s input=%s\n", path, string(inputJSON))
 
 	result := r.callProcedure(req, path, ProcedureQuery, inputJSON)
+	log.Printf("[trpc] query %s result=%+v\n", path, result)
 	writeJSON(w, result)
 }
 
@@ -125,29 +110,29 @@ func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path s
 
 	if isBatch {
 		names := strings.Split(path, ",")
-		// Batch mutation: body is an array of {json: ...} or object keyed by index
-		var batchInputs []trpcInputWrapper
+		// Batch mutation: body is an array or object keyed by index
+		var batchInputs []json.RawMessage
 		if len(body) > 0 {
 			if err := json.Unmarshal(body, &batchInputs); err != nil {
 				// Try as object keyed by index
-				var batchMap trpcBatchInput
+				var batchMap map[string]json.RawMessage
 				if err2 := json.Unmarshal(body, &batchMap); err2 != nil {
 					writeErrorResponse(w, trpcerrors.ErrParseError, "failed to parse batch body", http.StatusBadRequest, path)
 					return
 				}
 				for i := 0; i < len(names); i++ {
 					idx := strconv.Itoa(i)
-					if wrapper, ok := batchMap[idx]; ok {
-						batchInputs = append(batchInputs, wrapper)
+					if raw, ok := batchMap[idx]; ok {
+						batchInputs = append(batchInputs, raw)
 					} else {
-						batchInputs = append(batchInputs, trpcInputWrapper{})
+						batchInputs = append(batchInputs, nil)
 					}
 				}
 			}
 		}
 		r.handleBatch(w, req, names, func(i int) []byte {
 			if i < len(batchInputs) {
-				return batchInputs[i].JSON
+				return batchInputs[i]
 			}
 			return nil
 		})
@@ -157,15 +142,12 @@ func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path s
 	// Single mutation
 	var inputJSON []byte
 	if len(body) > 0 {
-		var wrapper trpcInputWrapper
-		if err := json.Unmarshal(body, &wrapper); err != nil {
-			writeErrorResponse(w, trpcerrors.ErrParseError, "failed to parse body", http.StatusBadRequest, path)
-			return
-		}
-		inputJSON = wrapper.JSON
+		inputJSON = body
 	}
+	log.Printf("[trpc] mutation %s body=%s\n", path, string(inputJSON))
 
 	result := r.callProcedure(req, path, ProcedureMutation, inputJSON)
+	log.Printf("[trpc] mutation %s result=%+v\n", path, result)
 	writeJSON(w, result)
 }
 
@@ -209,7 +191,7 @@ func (r *Router) callProcedure(req *http.Request, name string, expectedType Proc
 
 	return trpcResult{
 		Result: &trpcData{
-			Data: trpcJSON{JSON: result},
+			Data: result,
 		},
 	}
 }
@@ -229,14 +211,12 @@ func toErrorResult(err error, path string) trpcResult {
 func errorResult(code int, message, path string) trpcResult {
 	return trpcResult{
 		Error: &trpcError{
-			JSON: trpcErrorJSON{
-				Message: message,
-				Code:    code,
-				Data: trpcErrorData{
-					Code:       trpcerrors.CodeName(code),
-					HTTPStatus: trpcerrors.HTTPStatus(code),
-					Path:       path,
-				},
+			Message: message,
+			Code:    code,
+			Data: trpcErrorData{
+				Code:       trpcerrors.CodeName(code),
+				HTTPStatus: trpcerrors.HTTPStatus(code),
+				Path:       path,
 			},
 		},
 	}

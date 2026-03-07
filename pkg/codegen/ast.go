@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -18,17 +19,34 @@ type ProcedureInfo struct {
 	Type       string // "query" or "mutation"
 	InputType  types.Type
 	OutputType types.Type
+	RouterVar  string // variable name of the router this is registered on
+}
+
+// MergeInfo holds information about a router Merge() call.
+type MergeInfo struct {
+	ParentVar string // the router being merged into (e.g., "r")
+	Prefix    string // the namespace prefix (e.g., "task")
+	ChildVar  string // the router being merged (e.g., "taskRouter")
+}
+
+// EnumInfo holds information about a Go enum pattern (type X string/int + const block).
+type EnumInfo struct {
+	TypeName      string   // the Go type short name (e.g., "Status")
+	QualifiedName string   // fully qualified name (e.g., "example.com/models.Status")
+	Values        []string // the const values (e.g., ["active", "inactive"])
+	IsString      bool     // true if underlying type is string, false if int
 }
 
 // ParseResult holds the result of parsing Go source for tRPC procedures.
 type ParseResult struct {
 	Procedures []ProcedureInfo
+	Merges     []MergeInfo
+	Enums      []EnumInfo
 	RouterVar  string // name of the router variable (e.g., "appRouter")
 }
 
 // ParsePackage parses Go source files in the given directory pattern and extracts tRPC procedure registrations.
 func ParsePackage(pattern string, routerVar string) (*ParseResult, error) {
-	// Resolve pattern to absolute path
 	absPattern, err := filepath.Abs(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve path: %w", err)
@@ -40,7 +58,7 @@ func ParsePackage(pattern string, routerVar string) (*ParseResult, error) {
 		Dir: absPattern,
 	}
 
-	pkgs, err := packages.Load(cfg, ".")
+	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load packages: %w", err)
 	}
@@ -53,45 +71,72 @@ func ParsePackage(pattern string, routerVar string) (*ParseResult, error) {
 
 	for _, pkg := range pkgs {
 		if len(pkg.Errors) > 0 {
-			// Collect errors but continue
 			for _, e := range pkg.Errors {
 				fmt.Printf("warning: %s\n", e)
 			}
 		}
 
 		for _, file := range pkg.Syntax {
-			procedures := extractProcedures(file, pkg.TypesInfo)
-			result.Procedures = append(result.Procedures, procedures...)
+			extracted := extractFromFile(file, pkg.TypesInfo)
+			result.Procedures = append(result.Procedures, extracted.Procedures...)
+			result.Merges = append(result.Merges, extracted.Merges...)
 		}
+
+		// Extract enum patterns from the package
+		result.Enums = append(result.Enums, extractEnums(pkg)...)
 	}
 
+	resolvePrefixes(result)
 	return result, nil
 }
 
 // ParseDir parses Go source files using the simpler go/parser approach (no type checking).
 // This is a fallback when golang.org/x/tools/go/packages is not available.
+// It recursively scans subdirectories.
 func ParseDir(dir string) (*ParseResult, error) {
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, nil, parser.ParseComments)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse directory %s: %w", dir, err)
-	}
-
 	result := &ParseResult{}
 
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
-			procedures := extractProceduresFromAST(file)
-			result.Procedures = append(result.Procedures, procedures...)
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
+		if !info.IsDir() {
+			return nil
+		}
+
+		fset := token.NewFileSet()
+		pkgs, err := parser.ParseDir(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			return nil
+		}
+
+		for _, pkg := range pkgs {
+			for _, file := range pkg.Files {
+				extracted := extractFromFileAST(file)
+				result.Procedures = append(result.Procedures, extracted.Procedures...)
+				result.Merges = append(result.Merges, extracted.Merges...)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk directory %s: %w", dir, err)
 	}
 
+	resolvePrefixes(result)
 	return result, nil
 }
 
+// fileExtractionResult holds procedures and merges extracted from a single file.
+type fileExtractionResult struct {
+	Procedures []ProcedureInfo
+	Merges     []MergeInfo
+}
+
 // extractProcedures uses type info to extract procedures with full type resolution.
-func extractProcedures(file *ast.File, info *types.Info) []ProcedureInfo {
-	var procedures []ProcedureInfo
+func extractFromFile(file *ast.File, info *types.Info) fileExtractionResult {
+	var result fileExtractionResult
 
 	ast.Inspect(file, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -99,20 +144,21 @@ func extractProcedures(file *ast.File, info *types.Info) []ProcedureInfo {
 			return true
 		}
 
+		// Check for r.Merge("prefix", childRouter) calls
+		if merge := extractMergeCall(call); merge != nil {
+			result.Merges = append(result.Merges, *merge)
+			return true
+		}
+
 		// Check for gotrpc.Query() or gotrpc.Mutation() calls
-		// Can be either:
-		//   - gotrpc.Query(r, "name", handler)
-		//   - router.Query(r, "name", handler)  -- package-level function
 		var procType string
 
 		switch fn := call.Fun.(type) {
 		case *ast.IndexListExpr:
-			// Generic call: gotrpc.Query[I, O](r, "name", handler)
 			if sel, ok := fn.X.(*ast.SelectorExpr); ok {
 				procType = getProcType(sel.Sel.Name)
 			}
 		case *ast.IndexExpr:
-			// Single type param generic call
 			if sel, ok := fn.X.(*ast.SelectorExpr); ok {
 				procType = getProcType(sel.Sel.Name)
 			}
@@ -124,12 +170,14 @@ func extractProcedures(file *ast.File, info *types.Info) []ProcedureInfo {
 			return true
 		}
 
-		// Need at least 3 args: router, name, handler
 		if len(call.Args) < 3 {
 			return true
 		}
 
-		// Extract procedure name from second argument (string literal)
+		// Extract router variable name from first argument
+		routerVar := exprToVarName(call.Args[0])
+
+		// Extract procedure name from second argument
 		nameArg, ok := call.Args[1].(*ast.BasicLit)
 		if !ok || nameArg.Kind != token.STRING {
 			return true
@@ -141,13 +189,11 @@ func extractProcedures(file *ast.File, info *types.Info) []ProcedureInfo {
 		var inputType, outputType types.Type
 
 		if info != nil {
-			// Try to get type from type info
 			if tv, ok := info.Types[handlerExpr]; ok {
 				inputType, outputType = extractHandlerTypes(tv.Type)
 			}
 		}
 
-		// If type info didn't work, try to extract from AST
 		if inputType == nil || outputType == nil {
 			if funcLit, ok := handlerExpr.(*ast.FuncLit); ok {
 				if info != nil {
@@ -156,26 +202,74 @@ func extractProcedures(file *ast.File, info *types.Info) []ProcedureInfo {
 			}
 		}
 
-		procedures = append(procedures, ProcedureInfo{
+		result.Procedures = append(result.Procedures, ProcedureInfo{
 			Name:       name,
 			Type:       procType,
 			InputType:  inputType,
 			OutputType: outputType,
+			RouterVar:  routerVar,
 		})
 
 		return true
 	})
 
-	return procedures
+	return result
 }
 
-// extractProceduresFromAST extracts procedures without type info (fallback).
-func extractProceduresFromAST(file *ast.File) []ProcedureInfo {
-	var procedures []ProcedureInfo
+// extractMergeCall checks if a call expression is r.Merge("prefix", childRouter).
+func extractMergeCall(call *ast.CallExpr) *MergeInfo {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Merge" {
+		return nil
+	}
+
+	if len(call.Args) < 2 {
+		return nil
+	}
+
+	// First arg: prefix string
+	prefixArg, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || prefixArg.Kind != token.STRING {
+		return nil
+	}
+	prefix := strings.Trim(prefixArg.Value, `"`)
+
+	// Second arg: child router variable
+	childVar := exprToVarName(call.Args[1])
+
+	// Receiver: parent router variable
+	parentVar := exprToVarName(sel.X)
+
+	return &MergeInfo{
+		ParentVar: parentVar,
+		Prefix:    prefix,
+		ChildVar:  childVar,
+	}
+}
+
+// exprToVarName extracts a variable name from an expression.
+func exprToVarName(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	default:
+		return ""
+	}
+}
+
+// extractFromFileAST extracts procedures and merges without type info (fallback).
+func extractFromFileAST(file *ast.File) fileExtractionResult {
+	var result fileExtractionResult
 
 	ast.Inspect(file, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
+			return true
+		}
+
+		// Check for Merge calls
+		if merge := extractMergeCall(call); merge != nil {
+			result.Merges = append(result.Merges, *merge)
 			return true
 		}
 
@@ -197,21 +291,76 @@ func extractProceduresFromAST(file *ast.File) []ProcedureInfo {
 			return true
 		}
 
+		routerVar := exprToVarName(call.Args[0])
+
 		nameArg, ok := call.Args[1].(*ast.BasicLit)
 		if !ok || nameArg.Kind != token.STRING {
 			return true
 		}
 		name := strings.Trim(nameArg.Value, `"`)
 
-		procedures = append(procedures, ProcedureInfo{
-			Name: name,
-			Type: procType,
+		result.Procedures = append(result.Procedures, ProcedureInfo{
+			Name:      name,
+			Type:      procType,
+			RouterVar: routerVar,
 		})
 
 		return true
 	})
 
-	return procedures
+	return result
+}
+
+// resolvePrefixes applies Merge() namespace prefixes to procedure names.
+// It builds a prefix chain from Merge calls and prepends to each procedure name.
+func resolvePrefixes(result *ParseResult) {
+	if len(result.Merges) == 0 {
+		return
+	}
+
+	// Build map: childVar -> (parentVar, prefix)
+	// A child router may be merged into a parent with a prefix.
+	type mergeEntry struct {
+		parentVar string
+		prefix    string
+	}
+	mergeMap := make(map[string]mergeEntry)
+	for _, m := range result.Merges {
+		mergeMap[m.ChildVar] = mergeEntry{parentVar: m.ParentVar, prefix: m.Prefix}
+	}
+
+	// For each procedure, walk up the merge chain to build the full prefix.
+	for i, proc := range result.Procedures {
+		if proc.RouterVar == "" {
+			continue
+		}
+
+		var prefixes []string
+		current := proc.RouterVar
+		seen := make(map[string]bool) // prevent cycles
+
+		for {
+			if seen[current] {
+				break
+			}
+			seen[current] = true
+
+			entry, ok := mergeMap[current]
+			if !ok {
+				break
+			}
+			prefixes = append(prefixes, entry.prefix)
+			current = entry.parentVar
+		}
+
+		if len(prefixes) > 0 {
+			// Reverse prefixes (we collected child->parent, need parent->child)
+			for l, r := 0, len(prefixes)-1; l < r; l, r = l+1, r-1 {
+				prefixes[l], prefixes[r] = prefixes[r], prefixes[l]
+			}
+			result.Procedures[i].Name = strings.Join(prefixes, ".") + "." + proc.Name
+		}
+	}
 }
 
 func getProcType(name string) string {
@@ -244,6 +393,80 @@ func extractHandlerTypes(t types.Type) (input, output types.Type) {
 	}
 
 	return input, output
+}
+
+// extractEnums detects Go enum patterns: named types with string/int underlying + const blocks.
+func extractEnums(pkg *packages.Package) []EnumInfo {
+	var enums []EnumInfo
+
+	// Find all named types with string or int underlying types
+	scope := pkg.Types.Scope()
+	for _, name := range scope.Names() {
+		obj := scope.Lookup(name)
+		tn, ok := obj.(*types.TypeName)
+		if !ok {
+			continue
+		}
+
+		named, ok := tn.Type().(*types.Named)
+		if !ok {
+			continue
+		}
+
+		basic, ok := named.Underlying().(*types.Basic)
+		if !ok {
+			continue
+		}
+
+		isString := basic.Kind() == types.String
+		isInt := basic.Kind() == types.Int || basic.Kind() == types.Int8 ||
+			basic.Kind() == types.Int16 || basic.Kind() == types.Int32 ||
+			basic.Kind() == types.Int64 || basic.Kind() == types.Uint ||
+			basic.Kind() == types.Uint8 || basic.Kind() == types.Uint16 ||
+			basic.Kind() == types.Uint32 || basic.Kind() == types.Uint64
+
+		if !isString && !isInt {
+			continue
+		}
+
+		// Find const values of this type
+		var values []string
+		for _, constName := range scope.Names() {
+			constObj := scope.Lookup(constName)
+			c, ok := constObj.(*types.Const)
+			if !ok {
+				continue
+			}
+
+			// Check if the const is of the named type
+			if !types.Identical(c.Type(), named) {
+				continue
+			}
+
+			// Extract the value
+			val := c.Val().ExactString()
+			if isString {
+				// Remove surrounding quotes if present
+				val = strings.Trim(val, `"`)
+			}
+			values = append(values, val)
+		}
+
+		if len(values) > 0 {
+			qualName := name
+			if tn.Pkg() != nil {
+				qualName = tn.Pkg().Path() + "." + name
+			}
+			enums = append(enums, EnumInfo{
+				TypeName:      name,
+				QualifiedName: qualName,
+				Values:        values,
+				IsString:      isString,
+			})
+		}
+	}
+
+	return enums
 }
 
 // extractTypesFromFuncLit extracts types from a function literal's signature.
