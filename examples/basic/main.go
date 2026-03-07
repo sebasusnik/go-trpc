@@ -26,20 +26,25 @@ type CreateUserInput struct {
 func main() {
 	r := gotrpc.NewRouter()
 
-	// Query: GET /trpc/getUser?input={"json":{"id":"1"}}
+	// Query: GET /trpc/getUser?input={"id":"1"}
 	gotrpc.Query(r, "getUser",
 		func(ctx context.Context, input GetUserInput) (User, error) {
 			return User{ID: input.ID, Name: "John", Email: "john@example.com"}, nil
 		},
 	)
 
-	// Mutation: POST /trpc/createUser
+	// Mutation: POST /trpc/createUser  body: {"name":"Jane","email":"jane@example.com"}
 	gotrpc.Mutation(r, "createUser",
 		func(ctx context.Context, input CreateUserInput) (User, error) {
 			return User{ID: "new-id", Name: input.Name, Email: input.Email}, nil
 		},
 	)
 
+	r.WithCORS(gotrpc.CORSConfig{
+		AllowedOrigins: []string{"*"},
+	})
+
+	r.PrintRoutes("/trpc")
 	fmt.Println("Server listening on :8080")
 	http.ListenAndServe(":8080", r.Handler())
 }

@@ -65,7 +65,12 @@ func main() {
 	appRouter.Merge("user", userRouter)
 	appRouter.Merge("post", postRouter)
 
-	// Results in: /trpc/user.get, /trpc/user.create, /trpc/post.list
+	appRouter.WithCORS(gotrpc.CORSConfig{
+		AllowedOrigins: []string{"*"},
+	})
+
+	// Prints: user.get, user.create, post.list
+	appRouter.PrintRoutes("/trpc")
 	fmt.Println("Server listening on :8080")
 	http.ListenAndServe(":8080", appRouter.Handler())
 }
