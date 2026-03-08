@@ -15,6 +15,19 @@ type Router struct {
 	procedures  map[string]*procedure
 	middlewares []Middleware
 	corsConfig  *CORSConfig
+	transformer Transformer
+}
+
+// Option configures a Router.
+type Option func(*Router)
+
+// WithTransformer sets the data transformer for the router.
+// The transformer handles serialization formats like superjson.
+// Implementations must be safe for concurrent use.
+func WithTransformer(t Transformer) Option {
+	return func(r *Router) {
+		r.transformer = t
+	}
 }
 
 // CORSConfig holds CORS configuration.
@@ -25,11 +38,15 @@ type CORSConfig struct {
 	MaxAge         int
 }
 
-// NewRouter creates a new Router.
-func NewRouter() *Router {
-	return &Router{
+// NewRouter creates a new Router with optional configuration.
+func NewRouter(opts ...Option) *Router {
+	r := &Router{
 		procedures: make(map[string]*procedure),
 	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // Use adds a middleware to the router.

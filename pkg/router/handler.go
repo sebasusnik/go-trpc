@@ -51,22 +51,23 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Check for batch
+	// Check for batch and streaming mode
 	isBatch := req.URL.Query().Get("batch") == "1"
+	isStream := req.Header.Get("trpc-batch-mode") == "stream"
 
-	log.Printf("[trpc] %s %s (batch=%v)\n", req.Method, path, isBatch)
+	log.Printf("[trpc] %s %s (batch=%v stream=%v)\n", req.Method, path, isBatch, isStream)
 
 	switch req.Method {
 	case http.MethodGet:
-		r.handleQuery(w, req, path, isBatch)
+		r.handleQuery(w, req, path, isBatch, isStream)
 	case http.MethodPost:
-		r.handleMutation(w, req, path, isBatch)
+		r.handleMutation(w, req, path, isBatch, isStream)
 	default:
 		writeErrorResponse(w, trpcerrors.ErrMethodNotFound, "method not allowed", http.StatusMethodNotAllowed, path)
 	}
 }
 
-func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request, path string, isBatch bool) {
+func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request, path string, isBatch bool, isStream bool) {
 	if isBatch {
 		names := strings.Split(path, ",")
 		inputRaw := req.URL.Query().Get("input")
@@ -77,13 +78,18 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request, path stri
 				return
 			}
 		}
-		r.handleBatch(w, req, names, func(i int) []byte {
+		getInput := func(i int) []byte {
 			idx := strconv.Itoa(i)
 			if raw, ok := batchInput[idx]; ok {
 				return raw
 			}
 			return nil
-		})
+		}
+		if isStream {
+			r.handleBatchStream(w, req, names, getInput)
+		} else {
+			r.handleBatch(w, req, names, getInput)
+		}
 		return
 	}
 
@@ -100,7 +106,7 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request, path stri
 	writeResult(w, result)
 }
 
-func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path string, isBatch bool) {
+func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path string, isBatch bool, isStream bool) {
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		writeErrorResponse(w, trpcerrors.ErrParseError, "failed to read body", http.StatusBadRequest, path)
@@ -130,12 +136,17 @@ func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path s
 				}
 			}
 		}
-		r.handleBatch(w, req, names, func(i int) []byte {
+		getInput := func(i int) []byte {
 			if i < len(batchInputs) {
 				return batchInputs[i]
 			}
 			return nil
-		})
+		}
+		if isStream {
+			r.handleBatchStream(w, req, names, getInput)
+		} else {
+			r.handleBatch(w, req, names, getInput)
+		}
 		return
 	}
 
@@ -193,6 +204,17 @@ func (r *Router) callProcedure(req *http.Request, name string, expectedType Proc
 		return errorResult(trpcerrors.ErrMethodNotFound, "wrong method for procedure: "+name, name)
 	}
 
+	// Transformer: unwrap input envelope (e.g. superjson)
+	transformed := false
+	if r.transformer != nil && len(inputJSON) > 0 {
+		plain, ok, err := r.transformer.TransformInput(inputJSON)
+		if err != nil {
+			return errorResult(trpcerrors.ErrParseError, "transformer input error: "+err.Error(), name)
+		}
+		inputJSON = plain
+		transformed = ok
+	}
+
 	ctx := withRequest(req.Context(), req)
 
 	handler := proc.Handler
@@ -205,9 +227,19 @@ func (r *Router) callProcedure(req *http.Request, name string, expectedType Proc
 		return toErrorResult(err, name)
 	}
 
+	// Transformer: wrap output in envelope
+	outputData := result
+	if r.transformer != nil && transformed {
+		wrapped, err := r.transformer.TransformOutput(result)
+		if err != nil {
+			return errorResult(trpcerrors.ErrInternalError, "transformer output error: "+err.Error(), name)
+		}
+		outputData = wrapped
+	}
+
 	return trpcResult{
 		Result: &trpcData{
-			Data: result,
+			Data: outputData,
 		},
 	}
 }
