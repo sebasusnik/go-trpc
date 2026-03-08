@@ -53,7 +53,7 @@ func TestQuerySuccess(t *testing.T) {
 	srv := httptest.NewServer(r.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + `/trpc/getUser?input={"json":{"id":"1"}}`)
+	resp, err := http.Get(srv.URL + `/trpc/getUser?input={"id":"1"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,15 +74,11 @@ func TestQuerySuccess(t *testing.T) {
 	if !ok {
 		t.Fatal("expected data field")
 	}
-	jsonData, ok := data["json"].(map[string]interface{})
-	if !ok {
-		t.Fatal("expected json field")
+	if data["id"] != "1" {
+		t.Errorf("expected id=1, got %v", data["id"])
 	}
-	if jsonData["id"] != "1" {
-		t.Errorf("expected id=1, got %v", jsonData["id"])
-	}
-	if jsonData["name"] != "John" {
-		t.Errorf("expected name=John, got %v", jsonData["name"])
+	if data["name"] != "John" {
+		t.Errorf("expected name=John, got %v", data["name"])
 	}
 }
 
@@ -91,7 +87,7 @@ func TestMutationSuccess(t *testing.T) {
 	srv := httptest.NewServer(r.Handler())
 	defer srv.Close()
 
-	body := `{"json":{"name":"Jane","email":"jane@example.com"}}`
+	body := `{"name":"Jane","email":"jane@example.com"}`
 	resp, err := http.Post(srv.URL+"/trpc/createUser", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -105,9 +101,9 @@ func TestMutationSuccess(t *testing.T) {
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 
-	jsonData := result["result"].(map[string]interface{})["data"].(map[string]interface{})["json"].(map[string]interface{})
-	if jsonData["name"] != "Jane" {
-		t.Errorf("expected name=Jane, got %v", jsonData["name"])
+	data := result["result"].(map[string]interface{})["data"].(map[string]interface{})
+	if data["name"] != "Jane" {
+		t.Errorf("expected name=Jane, got %v", data["name"])
 	}
 }
 
@@ -116,7 +112,7 @@ func TestQueryNotFound(t *testing.T) {
 	srv := httptest.NewServer(r.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + `/trpc/getUser?input={"json":{"id":"not-found"}}`)
+	resp, err := http.Get(srv.URL + `/trpc/getUser?input={"id":"not-found"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,12 +125,11 @@ func TestQueryNotFound(t *testing.T) {
 	if !ok {
 		t.Fatal("expected error field")
 	}
-	errJSON := errField["json"].(map[string]interface{})
-	if errJSON["message"] != "user not found" {
-		t.Errorf("expected 'user not found', got %v", errJSON["message"])
+	if errField["message"] != "user not found" {
+		t.Errorf("expected 'user not found', got %v", errField["message"])
 	}
-	if int(errJSON["code"].(float64)) != errors.ErrNotFound {
-		t.Errorf("expected error code %d, got %v", errors.ErrNotFound, errJSON["code"])
+	if int(errField["code"].(float64)) != errors.ErrNotFound {
+		t.Errorf("expected error code %d, got %v", errors.ErrNotFound, errField["code"])
 	}
 }
 
@@ -153,9 +148,8 @@ func TestProcedureNotFound(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&result)
 
 	errField := result["error"].(map[string]interface{})
-	errJSON := errField["json"].(map[string]interface{})
-	if errJSON["message"] != "procedure not found: nonExistent" {
-		t.Errorf("unexpected error message: %v", errJSON["message"])
+	if errField["message"] != "procedure not found: nonExistent" {
+		t.Errorf("unexpected error message: %v", errField["message"])
 	}
 }
 
@@ -164,7 +158,7 @@ func TestBatchQuery(t *testing.T) {
 	srv := httptest.NewServer(r.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + `/trpc/getUser,getUser?batch=1&input={"0":{"json":{"id":"1"}},"1":{"json":{"id":"2"}}}`)
+	resp, err := http.Get(srv.URL + `/trpc/getUser,getUser?batch=1&input={"0":{"id":"1"},"1":{"id":"2"}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,12 +171,12 @@ func TestBatchQuery(t *testing.T) {
 		t.Fatalf("expected 2 batch results, got %d", len(results))
 	}
 
-	first := results[0]["result"].(map[string]interface{})["data"].(map[string]interface{})["json"].(map[string]interface{})
+	first := results[0]["result"].(map[string]interface{})["data"].(map[string]interface{})
 	if first["id"] != "1" {
 		t.Errorf("expected first id=1, got %v", first["id"])
 	}
 
-	second := results[1]["result"].(map[string]interface{})["data"].(map[string]interface{})["json"].(map[string]interface{})
+	second := results[1]["result"].(map[string]interface{})["data"].(map[string]interface{})
 	if second["id"] != "2" {
 		t.Errorf("expected second id=2, got %v", second["id"])
 	}
@@ -202,7 +196,7 @@ func TestNestedRouter(t *testing.T) {
 	srv := httptest.NewServer(appRouter.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + `/trpc/user.get?input={"json":{"id":"1"}}`)
+	resp, err := http.Get(srv.URL + `/trpc/user.get?input={"id":"1"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,9 +205,9 @@ func TestNestedRouter(t *testing.T) {
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 
-	jsonData := result["result"].(map[string]interface{})["data"].(map[string]interface{})["json"].(map[string]interface{})
-	if jsonData["id"] != "1" {
-		t.Errorf("expected id=1, got %v", jsonData["id"])
+	data := result["result"].(map[string]interface{})["data"].(map[string]interface{})
+	if data["id"] != "1" {
+		t.Errorf("expected id=1, got %v", data["id"])
 	}
 }
 
@@ -305,7 +299,7 @@ func TestWrongMethodForProcedure(t *testing.T) {
 	defer srv.Close()
 
 	// Try to POST to a query procedure
-	body := `{"json":{"id":"1"}}`
+	body := `{"id":"1"}`
 	resp, err := http.Post(srv.URL+"/trpc/getUser", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -317,6 +311,77 @@ func TestWrongMethodForProcedure(t *testing.T) {
 
 	if _, hasError := result["error"]; !hasError {
 		t.Fatal("expected error when using wrong method")
+	}
+}
+
+func TestQueryErrorHTTPStatus(t *testing.T) {
+	r := setupRouter()
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + `/trpc/getUser?input={"id":"not-found"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestMutationErrorHTTPStatus(t *testing.T) {
+	r := router.NewRouter()
+	router.Mutation(r, "adminAction",
+		func(ctx context.Context, input struct{}) (string, error) {
+			return "", errors.New(errors.ErrUnauthorized, "unauthorized")
+		},
+	)
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/trpc/adminAction", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", resp.StatusCode)
+	}
+}
+
+func TestBatchMixedResults207(t *testing.T) {
+	r := setupRouter()
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// First query succeeds (id="1"), second fails (id="not-found")
+	resp, err := http.Get(srv.URL + `/trpc/getUser,getUser?batch=1&input={"0":{"id":"1"},"1":{"id":"not-found"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", resp.StatusCode)
+	}
+}
+
+func TestBatchAllSuccess200(t *testing.T) {
+	r := setupRouter()
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + `/trpc/getUser,getUser?batch=1&input={"0":{"id":"1"},"1":{"id":"2"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 }
 

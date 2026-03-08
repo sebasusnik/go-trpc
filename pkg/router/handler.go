@@ -97,7 +97,7 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request, path stri
 
 	result := r.callProcedure(req, path, ProcedureQuery, inputJSON)
 	log.Printf("[trpc] query %s result=%+v\n", path, result)
-	writeJSON(w, result)
+	writeResult(w, result)
 }
 
 func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path string, isBatch bool) {
@@ -148,7 +148,7 @@ func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path s
 
 	result := r.callProcedure(req, path, ProcedureMutation, inputJSON)
 	log.Printf("[trpc] mutation %s result=%+v\n", path, result)
-	writeJSON(w, result)
+	writeResult(w, result)
 }
 
 func (r *Router) handleBatch(w http.ResponseWriter, req *http.Request, names []string, getInput func(i int) []byte) {
@@ -164,7 +164,23 @@ func (r *Router) handleBatch(w http.ResponseWriter, req *http.Request, names []s
 		}
 		results[i] = r.callProcedure(req, name, procType, inputJSON)
 	}
-	writeJSON(w, results)
+
+	// Use 207 Multi-Status when batch contains mixed success/error results
+	hasError := false
+	hasSuccess := false
+	for _, res := range results {
+		if res.Error != nil {
+			hasError = true
+		} else {
+			hasSuccess = true
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if hasError && hasSuccess {
+		w.WriteHeader(http.StatusMultiStatus)
+	}
+	json.NewEncoder(w).Encode(results)
 }
 
 func (r *Router) callProcedure(req *http.Request, name string, expectedType ProcedureType, inputJSON []byte) trpcResult {
@@ -226,6 +242,14 @@ func writeErrorResponse(w http.ResponseWriter, code int, message string, httpSta
 	result := errorResult(code, message, path)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus)
+	json.NewEncoder(w).Encode(result)
+}
+
+func writeResult(w http.ResponseWriter, result trpcResult) {
+	w.Header().Set("Content-Type", "application/json")
+	if result.Error != nil {
+		w.WriteHeader(result.Error.Data.HTTPStatus)
+	}
 	json.NewEncoder(w).Encode(result)
 }
 
