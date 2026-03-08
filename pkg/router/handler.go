@@ -2,9 +2,10 @@ package router
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
-	"log"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -28,9 +29,10 @@ type trpcError struct {
 }
 
 type trpcErrorData struct {
-	Code       string `json:"code"`
-	HTTPStatus int    `json:"httpStatus"`
-	Path       string `json:"path"`
+	Code       string  `json:"code"`
+	HTTPStatus int     `json:"httpStatus"`
+	Path       string  `json:"path"`
+	Stack      *string `json:"stack,omitempty"`
 }
 
 // ServeHTTP implements http.Handler.
@@ -55,13 +57,16 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	isBatch := req.URL.Query().Get("batch") == "1"
 	isStream := req.Header.Get("trpc-batch-mode") == "stream"
 
-	log.Printf("[trpc] %s %s (batch=%v stream=%v)\n", req.Method, path, isBatch, isStream)
+	r.logger.Info("%s %s (batch=%v stream=%v)", req.Method, path, isBatch, isStream)
 
 	switch req.Method {
 	case http.MethodGet:
 		r.handleQuery(w, req, path, isBatch, isStream)
 	case http.MethodPost:
 		r.handleMutation(w, req, path, isBatch, isStream)
+	case http.MethodHead:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 	default:
 		writeErrorResponse(w, trpcerrors.ErrMethodNotFound, "method not allowed", http.StatusMethodNotAllowed, path)
 	}
@@ -93,20 +98,33 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request, path stri
 		return
 	}
 
+	// Check if this is a subscription procedure
+	if proc, ok := r.procedures[path]; ok && proc.Type == ProcedureSubscription {
+		r.handleSubscription(w, req, path)
+		return
+	}
+
 	// Single query
 	inputRaw := req.URL.Query().Get("input")
 	var inputJSON []byte
 	if inputRaw != "" {
 		inputJSON = []byte(inputRaw)
 	}
-	log.Printf("[trpc] query %s input=%s\n", path, string(inputJSON))
+	r.logger.Debug("query %s input=%s", path, string(inputJSON))
 
-	result := r.callProcedure(req, path, ProcedureQuery, inputJSON)
-	log.Printf("[trpc] query %s result=%+v\n", path, result)
+	result := r.callProcedure(w, req, path, ProcedureQuery, inputJSON)
+	r.logger.Debug("query %s result=%+v", path, result)
 	writeResult(w, result)
 }
 
 func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path string, isBatch bool, isStream bool) {
+	// Validate Content-Type for POST requests
+	ct := req.Header.Get("Content-Type")
+	if ct != "" && !strings.HasPrefix(ct, "application/json") {
+		writeErrorResponse(w, trpcerrors.ErrParseError, "unsupported Content-Type: expected application/json", http.StatusUnsupportedMediaType, path)
+		return
+	}
+
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		writeErrorResponse(w, trpcerrors.ErrParseError, "failed to read body", http.StatusBadRequest, path)
@@ -155,10 +173,10 @@ func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path s
 	if len(body) > 0 {
 		inputJSON = body
 	}
-	log.Printf("[trpc] mutation %s body=%s\n", path, string(inputJSON))
+	r.logger.Debug("mutation %s body=%s", path, string(inputJSON))
 
-	result := r.callProcedure(req, path, ProcedureMutation, inputJSON)
-	log.Printf("[trpc] mutation %s result=%+v\n", path, result)
+	result := r.callProcedure(w, req, path, ProcedureMutation, inputJSON)
+	r.logger.Debug("mutation %s result=%+v", path, result)
 	writeResult(w, result)
 }
 
@@ -173,7 +191,7 @@ func (r *Router) handleBatch(w http.ResponseWriter, req *http.Request, names []s
 		if req.Method == http.MethodPost {
 			procType = ProcedureMutation
 		}
-		results[i] = r.callProcedure(req, name, procType, inputJSON)
+		results[i] = r.callProcedure(w, req, name, procType, inputJSON)
 	}
 
 	// Use 207 Multi-Status when batch contains mixed success/error results
@@ -194,7 +212,14 @@ func (r *Router) handleBatch(w http.ResponseWriter, req *http.Request, names []s
 	json.NewEncoder(w).Encode(results)
 }
 
-func (r *Router) callProcedure(req *http.Request, name string, expectedType ProcedureType, inputJSON []byte) trpcResult {
+func (r *Router) callProcedure(w http.ResponseWriter, req *http.Request, name string, expectedType ProcedureType, inputJSON []byte) (result trpcResult) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			r.logger.Error("panic in procedure %s: %v\n%s", name, rec, debug.Stack())
+			result = errorResult(trpcerrors.ErrInternalError, fmt.Sprintf("panic: %v", rec), name)
+		}
+	}()
+
 	proc, ok := r.procedures[name]
 	if !ok {
 		return errorResult(trpcerrors.ErrMethodNotFound, "procedure not found: "+name, name)
@@ -216,21 +241,25 @@ func (r *Router) callProcedure(req *http.Request, name string, expectedType Proc
 	}
 
 	ctx := withRequest(req.Context(), req)
+	if w != nil {
+		ctx = withResponseWriter(ctx, w)
+	}
+	ctx = withProcedureName(ctx, name)
 
 	handler := proc.Handler
 	if len(r.middlewares) > 0 {
 		handler = applyMiddlewares(handler, r.middlewares)
 	}
 
-	result, err := handler(ctx, Request{Input: inputJSON})
+	output, err := handler(ctx, Request{Input: inputJSON})
 	if err != nil {
-		return toErrorResult(err, name)
+		return r.toErrorResult(err, name)
 	}
 
 	// Transformer: wrap output in envelope
-	outputData := result
+	outputData := output
 	if r.transformer != nil && transformed {
-		wrapped, err := r.transformer.TransformOutput(result)
+		wrapped, err := r.transformer.TransformOutput(output)
 		if err != nil {
 			return errorResult(trpcerrors.ErrInternalError, "transformer output error: "+err.Error(), name)
 		}
@@ -244,13 +273,16 @@ func (r *Router) callProcedure(req *http.Request, name string, expectedType Proc
 	}
 }
 
-func toErrorResult(err error, path string) trpcResult {
+func (r *Router) toErrorResult(err error, path string) trpcResult {
 	code := trpcerrors.ErrInternalError
 	msg := err.Error()
 
 	if trpcErr, ok := err.(*trpcerrors.TRPCError); ok {
 		code = trpcErr.Code
 		msg = trpcErr.Message
+		if trpcErr.Cause != nil {
+			r.logger.Error("procedure %s error: %s (cause: %v)", path, msg, trpcErr.Cause)
+		}
 	}
 
 	return errorResult(code, msg, path)

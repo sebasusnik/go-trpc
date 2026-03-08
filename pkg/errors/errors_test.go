@@ -1,6 +1,10 @@
 package errors
 
-import "testing"
+import (
+	"errors"
+	"fmt"
+	"testing"
+)
 
 func TestNew(t *testing.T) {
 	err := New(ErrNotFound, "user not found")
@@ -36,6 +40,69 @@ func TestCodeName(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("CodeName(%d) = %q, want %q", tt.code, got, tt.want)
 		}
+	}
+}
+
+func TestNewf(t *testing.T) {
+	err := Newf(ErrBadRequest, "field %s is required", "email")
+	if err.Code != ErrBadRequest {
+		t.Errorf("expected code %d, got %d", ErrBadRequest, err.Code)
+	}
+	if err.Message != "field email is required" {
+		t.Errorf("expected message 'field email is required', got %q", err.Message)
+	}
+}
+
+func TestWrap(t *testing.T) {
+	cause := fmt.Errorf("connection refused")
+	err := Wrap(cause, ErrInternalError, "database error")
+
+	if err.Code != ErrInternalError {
+		t.Errorf("expected code %d, got %d", ErrInternalError, err.Code)
+	}
+	if err.Message != "database error" {
+		t.Errorf("expected message 'database error', got %q", err.Message)
+	}
+	if err.Cause != cause {
+		t.Error("expected cause to be preserved")
+	}
+}
+
+func TestWrapf(t *testing.T) {
+	cause := fmt.Errorf("not found in cache")
+	err := Wrapf(cause, ErrNotFound, "user %s not found", "alice")
+
+	if err.Message != "user alice not found" {
+		t.Errorf("expected formatted message, got %q", err.Message)
+	}
+	if err.Cause != cause {
+		t.Error("expected cause to be preserved")
+	}
+}
+
+func TestUnwrap(t *testing.T) {
+	cause := fmt.Errorf("original error")
+	err := Wrap(cause, ErrInternalError, "wrapped")
+
+	unwrapped := errors.Unwrap(err)
+	if unwrapped != cause {
+		t.Errorf("Unwrap() = %v, want %v", unwrapped, cause)
+	}
+}
+
+func TestErrorsIs(t *testing.T) {
+	sentinel := fmt.Errorf("sentinel")
+	err := Wrap(sentinel, ErrInternalError, "wrapped")
+
+	if !errors.Is(err, sentinel) {
+		t.Error("errors.Is should find the wrapped sentinel error")
+	}
+}
+
+func TestUnwrapNilCause(t *testing.T) {
+	err := New(ErrNotFound, "not found")
+	if errors.Unwrap(err) != nil {
+		t.Error("Unwrap() should return nil when no cause")
 	}
 }
 

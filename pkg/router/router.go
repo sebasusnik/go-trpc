@@ -10,12 +10,16 @@ import (
 	trpcerrors "github.com/sebasusnik/go-trpc/pkg/errors"
 )
 
+// Version is the current version of go-trpc.
+const Version = "0.4.0"
+
 // Router is the main tRPC router that holds procedures and middlewares.
 type Router struct {
 	procedures  map[string]*procedure
 	middlewares []Middleware
 	corsConfig  *CORSConfig
 	transformer Transformer
+	logger      Logger
 }
 
 // Option configures a Router.
@@ -27,6 +31,14 @@ type Option func(*Router)
 func WithTransformer(t Transformer) Option {
 	return func(r *Router) {
 		r.transformer = t
+	}
+}
+
+// WithLogger sets the logger for the router.
+// Pass NopLogger to disable logging entirely.
+func WithLogger(l Logger) Option {
+	return func(r *Router) {
+		r.logger = l
 	}
 }
 
@@ -42,6 +54,7 @@ type CORSConfig struct {
 func NewRouter(opts ...Option) *Router {
 	r := &Router{
 		procedures: make(map[string]*procedure),
+		logger:     defaultLogger{},
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -64,9 +77,10 @@ func (r *Router) Merge(prefix string, other *Router) {
 	for name, proc := range other.procedures {
 		fullName := prefix + "." + name
 		r.procedures[fullName] = &procedure{
-			Name:    fullName,
-			Type:    proc.Type,
-			Handler: proc.Handler,
+			Name:                fullName,
+			Type:                proc.Type,
+			Handler:             proc.Handler,
+			SubscriptionHandler: proc.SubscriptionHandler,
 		}
 	}
 }
@@ -89,9 +103,12 @@ func (r *Router) PrintRoutes(basePath string) {
 		proc := r.procedures[name]
 		method := "GET"
 		kind := "query"
-		if proc.Type == ProcedureMutation {
+		switch proc.Type {
+		case ProcedureMutation:
 			method = "POST"
 			kind = "mutation"
+		case ProcedureSubscription:
+			kind = "subscription"
 		}
 		fmt.Printf("    %-8s %-20s %s  %s/%s\n", kind, name, method, basePath, name)
 	}
@@ -114,6 +131,14 @@ func Query[I any, O any](r *Router, name string, handler func(ctx context.Contex
 					return nil, trpcerrors.New(trpcerrors.ErrParseError, "failed to parse input: "+err.Error())
 				}
 			}
+			if v, ok := any(&input).(Validator); ok {
+				if err := v.Validate(); err != nil {
+					if trpcErr, ok := err.(*trpcerrors.TRPCError); ok {
+						return nil, trpcErr
+					}
+					return nil, trpcerrors.New(trpcerrors.ErrBadRequest, err.Error())
+				}
+			}
 			return handler(ctx, input)
 		},
 	}
@@ -131,7 +156,54 @@ func Mutation[I any, O any](r *Router, name string, handler func(ctx context.Con
 					return nil, trpcerrors.New(trpcerrors.ErrParseError, "failed to parse input: "+err.Error())
 				}
 			}
+			if v, ok := any(&input).(Validator); ok {
+				if err := v.Validate(); err != nil {
+					if trpcErr, ok := err.(*trpcerrors.TRPCError); ok {
+						return nil, trpcErr
+					}
+					return nil, trpcerrors.New(trpcerrors.ErrBadRequest, err.Error())
+				}
+			}
 			return handler(ctx, input)
+		},
+	}
+}
+
+// Subscription registers a subscription procedure on the router.
+// The handler returns a channel that yields events until closed.
+// The channel is consumed via Server-Sent Events (SSE).
+func Subscription[I any, O any](r *Router, name string, handler func(ctx context.Context, input I) (<-chan O, error)) {
+	r.procedures[name] = &procedure{
+		Name: name,
+		Type: ProcedureSubscription,
+		SubscriptionHandler: func(ctx context.Context, req Request) (<-chan interface{}, error) {
+			var input I
+			if len(req.Input) > 0 {
+				if err := json.Unmarshal(req.Input, &input); err != nil {
+					return nil, trpcerrors.New(trpcerrors.ErrParseError, "failed to parse input: "+err.Error())
+				}
+			}
+			if v, ok := any(&input).(Validator); ok {
+				if err := v.Validate(); err != nil {
+					if trpcErr, ok := err.(*trpcerrors.TRPCError); ok {
+						return nil, trpcErr
+					}
+					return nil, trpcerrors.New(trpcerrors.ErrBadRequest, err.Error())
+				}
+			}
+			ch, err := handler(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			// Bridge typed chan O to chan interface{}
+			out := make(chan interface{})
+			go func() {
+				defer close(out)
+				for v := range ch {
+					out <- v
+				}
+			}()
+			return out, nil
 		},
 	}
 }

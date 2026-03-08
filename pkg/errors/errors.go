@@ -52,10 +52,16 @@ var httpStatus = map[int]int{
 type TRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Cause   error  `json:"-"` // original error for logging; never sent to client
 }
 
 func (e *TRPCError) Error() string {
 	return fmt.Sprintf("trpc error %d: %s", e.Code, e.Message)
+}
+
+// Unwrap returns the underlying cause, enabling errors.Is and errors.As.
+func (e *TRPCError) Unwrap() error {
+	return e.Cause
 }
 
 // New creates a new TRPCError with the given code and message.
@@ -66,6 +72,17 @@ func New(code int, message string) *TRPCError {
 // Newf creates a new TRPCError with a formatted message.
 func Newf(code int, format string, args ...interface{}) *TRPCError {
 	return &TRPCError{Code: code, Message: fmt.Sprintf(format, args...)}
+}
+
+// Wrap creates a TRPCError that wraps an underlying error.
+// The cause is preserved for logging but never sent to the client.
+func Wrap(err error, code int, message string) *TRPCError {
+	return &TRPCError{Code: code, Message: message, Cause: err}
+}
+
+// Wrapf creates a TRPCError that wraps an underlying error with a formatted message.
+func Wrapf(err error, code int, format string, args ...interface{}) *TRPCError {
+	return &TRPCError{Code: code, Message: fmt.Sprintf(format, args...), Cause: err}
 }
 
 // CodeName returns the string name for a tRPC error code.

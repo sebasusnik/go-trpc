@@ -47,7 +47,7 @@ func (r *Router) handleBatchStream(w http.ResponseWriter, req *http.Request, nam
 			if req.Method == http.MethodPost {
 				procType = ProcedureMutation
 			}
-			result := r.callProcedure(req, procName, procType, inputJSON)
+			result := r.callProcedure(w, req, procName, procType, inputJSON)
 			resultCh <- indexedResult{Index: idx, Result: result}
 		}(i, name)
 	}

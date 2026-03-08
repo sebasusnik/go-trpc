@@ -3,9 +3,12 @@ package router_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sebasusnik/go-trpc/pkg/errors"
@@ -398,5 +401,1040 @@ func TestInvalidPath(t *testing.T) {
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
+// --- Panic Recovery Tests ---
+
+func TestPanicRecovery(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "boom", func(ctx context.Context, input struct{}) (string, error) {
+		panic("something went wrong")
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/boom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	errField, ok := result["error"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected error field in response")
+	}
+	data := errField["data"].(map[string]interface{})
+	if data["code"] != "INTERNAL_SERVER_ERROR" {
+		t.Errorf("expected INTERNAL_SERVER_ERROR, got %v", data["code"])
+	}
+}
+
+func TestPanicRecoveryInBatch(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "ok", func(ctx context.Context, input struct{}) (string, error) {
+		return "hello", nil
+	})
+	router.Query(r, "boom", func(ctx context.Context, input struct{}) (string, error) {
+		panic("boom")
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/ok,boom?batch=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var results []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&results)
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0]["result"] == nil {
+		t.Error("first result should be success")
+	}
+	if results[1]["error"] == nil {
+		t.Error("second result should be error (panic)")
+	}
+}
+
+func TestPanicRecoveryInStream(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "ok", func(ctx context.Context, input struct{}) (string, error) {
+		return "hello", nil
+	})
+	router.Query(r, "boom", func(ctx context.Context, input struct{}) (string, error) {
+		panic("boom")
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+"/trpc/ok,boom?batch=1", nil)
+	req.Header.Set("trpc-batch-mode", "stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var results map[string]map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&results)
+
+	if results["0"]["result"] == nil {
+		t.Error("first result should be success")
+	}
+	if results["1"]["error"] == nil {
+		t.Error("second result should be error (panic)")
+	}
+}
+
+// --- Logger Tests ---
+
+type captureLogger struct {
+	mu     sync.Mutex
+	infos  []string
+	debugs []string
+	errors []string
+}
+
+func (l *captureLogger) Info(msg string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.infos = append(l.infos, fmt.Sprintf(msg, args...))
+}
+
+func (l *captureLogger) Debug(msg string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debugs = append(l.debugs, fmt.Sprintf(msg, args...))
+}
+
+func (l *captureLogger) Error(msg string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.errors = append(l.errors, fmt.Sprintf(msg, args...))
+}
+
+func TestCustomLogger(t *testing.T) {
+	logger := &captureLogger{}
+	r := router.NewRouter(router.WithLogger(logger))
+	router.Query(r, "hello", func(ctx context.Context, input struct{}) (string, error) {
+		return "world", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if len(logger.infos) == 0 {
+		t.Error("expected at least one info log")
+	}
+	if len(logger.debugs) == 0 {
+		t.Error("expected at least one debug log")
+	}
+}
+
+func TestNopLogger(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "hello", func(ctx context.Context, input struct{}) (string, error) {
+		return "world", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 with NopLogger, got %d", resp.StatusCode)
+	}
+}
+
+func TestPanicRecoveryLogsError(t *testing.T) {
+	logger := &captureLogger{}
+	r := router.NewRouter(router.WithLogger(logger))
+	router.Query(r, "boom", func(ctx context.Context, input struct{}) (string, error) {
+		panic("test panic")
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/boom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if len(logger.errors) == 0 {
+		t.Fatal("expected panic to be logged as error")
+	}
+	if !strings.Contains(logger.errors[0], "test panic") {
+		t.Errorf("expected error log to contain panic message, got %q", logger.errors[0])
+	}
+}
+
+// --- Input Validation Tests ---
+
+type ValidatedInput struct {
+	Name string `json:"name"`
+}
+
+func (v *ValidatedInput) Validate() error {
+	if v.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+	return nil
+}
+
+type ValidatedInputCustomError struct {
+	Token string `json:"token"`
+}
+
+func (v *ValidatedInputCustomError) Validate() error {
+	if v.Token == "" {
+		return errors.New(errors.ErrUnauthorized, "missing token")
+	}
+	return nil
+}
+
+func TestInputValidationSuccess(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "greet", func(ctx context.Context, input ValidatedInput) (string, error) {
+		return "Hello, " + input.Name, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + `/trpc/greet?input={"name":"World"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	data := result["result"].(map[string]interface{})["data"]
+	if data != "Hello, World" {
+		t.Errorf("expected 'Hello, World', got %v", data)
+	}
+}
+
+func TestInputValidationFailure(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "greet", func(ctx context.Context, input ValidatedInput) (string, error) {
+		return "Hello, " + input.Name, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + `/trpc/greet?input={"name":""}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	errField := result["error"].(map[string]interface{})
+	if errField["message"] != "name is required" {
+		t.Errorf("expected 'name is required', got %v", errField["message"])
+	}
+}
+
+func TestInputValidationCustomError(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Mutation(r, "action", func(ctx context.Context, input ValidatedInputCustomError) (string, error) {
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/trpc/action", "application/json", strings.NewReader(`{"token":""}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	errField := result["error"].(map[string]interface{})
+	data := errField["data"].(map[string]interface{})
+	if data["code"] != "UNAUTHORIZED" {
+		t.Errorf("expected UNAUTHORIZED, got %v", data["code"])
+	}
+}
+
+func TestInputValidationMutation(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Mutation(r, "create", func(ctx context.Context, input ValidatedInput) (string, error) {
+		return "created " + input.Name, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Should fail validation
+	resp, err := http.Post(srv.URL+"/trpc/create", "application/json", strings.NewReader(`{"name":""}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
+// --- Batch Mutation Test ---
+
+func TestBatchMutation(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Mutation(r, "createUser", func(ctx context.Context, input CreateUserInput) (User, error) {
+		return User{ID: "new", Name: input.Name, Email: input.Email}, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	body := `[{"name":"Alice","email":"alice@example.com"},{"name":"Bob","email":"bob@example.com"}]`
+	resp, err := http.Post(srv.URL+"/trpc/createUser,createUser?batch=1", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var results []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&results)
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	first := results[0]["result"].(map[string]interface{})["data"].(map[string]interface{})
+	if first["name"] != "Alice" {
+		t.Errorf("expected Alice, got %v", first["name"])
+	}
+	second := results[1]["result"].(map[string]interface{})["data"].(map[string]interface{})
+	if second["name"] != "Bob" {
+		t.Errorf("expected Bob, got %v", second["name"])
+	}
+}
+
+// --- Context Helper Tests ---
+
+func TestGetClientIP(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "ip", func(ctx context.Context, input struct{}) (string, error) {
+		return router.GetClientIP(ctx), nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Test X-Forwarded-For
+	req, _ := http.NewRequest("GET", srv.URL+"/trpc/ip", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.1, 10.0.0.1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	data := result["result"].(map[string]interface{})["data"]
+	if data != "203.0.113.1" {
+		t.Errorf("expected first XFF IP, got %v", data)
+	}
+}
+
+func TestGetClientIPXRealIP(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "ip", func(ctx context.Context, input struct{}) (string, error) {
+		return router.GetClientIP(ctx), nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+"/trpc/ip", nil)
+	req.Header.Set("X-Real-IP", "198.51.100.1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	data := result["result"].(map[string]interface{})["data"]
+	if data != "198.51.100.1" {
+		t.Errorf("expected X-Real-IP, got %v", data)
+	}
+}
+
+func TestGetBearerToken(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "token", func(ctx context.Context, input struct{}) (string, error) {
+		return router.GetBearerToken(ctx), nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+"/trpc/token", nil)
+	req.Header.Set("Authorization", "Bearer my-secret-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	data := result["result"].(map[string]interface{})["data"]
+	if data != "my-secret-token" {
+		t.Errorf("expected 'my-secret-token', got %v", data)
+	}
+}
+
+func TestGetBearerTokenEmpty(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "token", func(ctx context.Context, input struct{}) (string, error) {
+		return router.GetBearerToken(ctx), nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	data := result["result"].(map[string]interface{})["data"]
+	if data != "" {
+		t.Errorf("expected empty string, got %v", data)
+	}
+}
+
+func TestGetCookie(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "session", func(ctx context.Context, input struct{}) (string, error) {
+		return router.GetCookie(ctx, "session_id"), nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+"/trpc/session", nil)
+	req.AddCookie(&http.Cookie{Name: "session_id", Value: "abc123"})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	data := result["result"].(map[string]interface{})["data"]
+	if data != "abc123" {
+		t.Errorf("expected 'abc123', got %v", data)
+	}
+}
+
+func TestGetQueryParam(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "param", func(ctx context.Context, input struct{}) (string, error) {
+		return router.GetQueryParam(ctx, "foo"), nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/param?foo=bar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	data := result["result"].(map[string]interface{})["data"]
+	if data != "bar" {
+		t.Errorf("expected 'bar', got %v", data)
+	}
+}
+
+// --- Error Cause Chain Tests ---
+
+func TestErrorCauseLoggedOnWrap(t *testing.T) {
+	logger := &captureLogger{}
+	r := router.NewRouter(router.WithLogger(logger))
+	router.Query(r, "fail", func(ctx context.Context, input struct{}) (string, error) {
+		cause := fmt.Errorf("connection refused")
+		return "", errors.Wrap(cause, errors.ErrInternalError, "database error")
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/fail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if len(logger.errors) == 0 {
+		t.Fatal("expected error cause to be logged")
+	}
+	if !strings.Contains(logger.errors[0], "connection refused") {
+		t.Errorf("expected log to contain cause, got %q", logger.errors[0])
+	}
+}
+
+// --- Subscription (SSE) Tests ---
+
+func TestSubscriptionSSE(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Subscription(r, "counter", func(ctx context.Context, input struct{}) (<-chan int, error) {
+		ch := make(chan int)
+		go func() {
+			defer close(ch)
+			for i := 0; i < 3; i++ {
+				ch <- i
+			}
+		}()
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %s", resp.Header.Get("Content-Type"))
+	}
+
+	// Read the full SSE stream
+	body, _ := io.ReadAll(resp.Body)
+	content := string(body)
+
+	// Should contain 3 data events and a stopped event
+	if !strings.Contains(content, "event: data") {
+		t.Error("expected 'event: data' in SSE stream")
+	}
+	if !strings.Contains(content, "event: stopped") {
+		t.Error("expected 'event: stopped' in SSE stream")
+	}
+	if !strings.Contains(content, `"data":0`) {
+		t.Error("expected first event with data 0")
+	}
+	if !strings.Contains(content, `"data":2`) {
+		t.Error("expected last event with data 2")
+	}
+}
+
+func TestSubscriptionWithInput(t *testing.T) {
+	type CountInput struct {
+		Max int `json:"max"`
+	}
+
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Subscription(r, "countTo", func(ctx context.Context, input CountInput) (<-chan int, error) {
+		ch := make(chan int)
+		go func() {
+			defer close(ch)
+			for i := 1; i <= input.Max; i++ {
+				ch <- i
+			}
+		}()
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + `/trpc/countTo?input={"max":2}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	content := string(body)
+
+	if !strings.Contains(content, `"data":1`) {
+		t.Error("expected event with data 1")
+	}
+	if !strings.Contains(content, `"data":2`) {
+		t.Error("expected event with data 2")
+	}
+}
+
+func TestSubscriptionError(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Subscription(r, "failing", func(ctx context.Context, input struct{}) (<-chan string, error) {
+		return nil, errors.New(errors.ErrUnauthorized, "not allowed")
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/failing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Should return error as JSON, not SSE
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result["error"] == nil {
+		t.Error("expected error in response")
+	}
+}
+
+func TestSubscriptionPanic(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Subscription(r, "panicking", func(ctx context.Context, input struct{}) (<-chan string, error) {
+		panic("subscription panic")
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/panicking")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", resp.StatusCode)
+	}
+}
+
+func TestSubscriptionNestedRouter(t *testing.T) {
+	eventsRouter := router.NewRouter()
+	router.Subscription(eventsRouter, "stream", func(ctx context.Context, input struct{}) (<-chan string, error) {
+		ch := make(chan string)
+		go func() {
+			defer close(ch)
+			ch <- "hello"
+		}()
+		return ch, nil
+	})
+
+	appRouter := router.NewRouter(router.WithLogger(router.NopLogger))
+	appRouter.Merge("events", eventsRouter)
+
+	srv := httptest.NewServer(appRouter.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/events.stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %s", resp.Header.Get("Content-Type"))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	content := string(body)
+
+	if !strings.Contains(content, `"data":"hello"`) {
+		t.Error("expected event with data 'hello'")
+	}
+}
+
+func TestSubscriptionTrackedEvents(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Subscription(r, "messages", func(ctx context.Context, input struct{}) (<-chan interface{}, error) {
+		ch := make(chan interface{})
+		go func() {
+			defer close(ch)
+			ch <- router.TrackedEvent{ID: "msg-1", Data: "hello"}
+			ch <- router.TrackedEvent{ID: "msg-2", Data: "world"}
+		}()
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/messages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	content := string(body)
+
+	// Should use custom IDs from TrackedEvent
+	if !strings.Contains(content, "id: msg-1") {
+		t.Error("expected tracked event id 'msg-1'")
+	}
+	if !strings.Contains(content, "id: msg-2") {
+		t.Error("expected tracked event id 'msg-2'")
+	}
+	if !strings.Contains(content, `"data":"hello"`) {
+		t.Error("expected data 'hello'")
+	}
+	if !strings.Contains(content, `"data":"world"`) {
+		t.Error("expected data 'world'")
+	}
+}
+
+func TestSubscriptionMixedTrackedAndUntracked(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Subscription(r, "mixed", func(ctx context.Context, input struct{}) (<-chan interface{}, error) {
+		ch := make(chan interface{})
+		go func() {
+			defer close(ch)
+			ch <- "plain"                                        // untracked, gets auto ID "0"
+			ch <- router.TrackedEvent{ID: "custom-1", Data: "tracked"} // tracked
+			ch <- "plain2"                                       // untracked, gets auto ID "1"
+		}()
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/mixed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	content := string(body)
+
+	if !strings.Contains(content, "id: 0") {
+		t.Error("expected auto-incremented id '0' for untracked event")
+	}
+	if !strings.Contains(content, "id: custom-1") {
+		t.Error("expected tracked event id 'custom-1'")
+	}
+	if !strings.Contains(content, "id: 1") {
+		t.Error("expected auto-incremented id '1' for second untracked event")
+	}
+}
+
+func TestSubscriptionLastEventID(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Subscription(r, "resumable", func(ctx context.Context, input struct{}) (<-chan interface{}, error) {
+		lastID := router.GetLastEventID(ctx)
+		ch := make(chan interface{})
+		go func() {
+			defer close(ch)
+			ch <- router.TrackedEvent{ID: "resume-from", Data: lastID}
+		}()
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+"/trpc/resumable", nil)
+	req.Header.Set("Last-Event-ID", "msg-42")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	content := string(body)
+
+	// The handler should have received "msg-42" as the last event ID
+	if !strings.Contains(content, `"data":"msg-42"`) {
+		t.Errorf("expected handler to receive Last-Event-ID 'msg-42', got: %s", content)
+	}
+}
+
+func TestSetHeader(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "cached", func(ctx context.Context, input struct{}) (string, error) {
+		router.SetHeader(ctx, "Cache-Control", "max-age=3600")
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/cached")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if got := resp.Header.Get("Cache-Control"); got != "max-age=3600" {
+		t.Errorf("expected Cache-Control 'max-age=3600', got %q", got)
+	}
+}
+
+func TestAddHeader(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "multi", func(ctx context.Context, input struct{}) (string, error) {
+		router.AddHeader(ctx, "X-Custom", "value1")
+		router.AddHeader(ctx, "X-Custom", "value2")
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/multi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	values := resp.Header.Values("X-Custom")
+	if len(values) != 2 || values[0] != "value1" || values[1] != "value2" {
+		t.Errorf("expected two X-Custom headers, got %v", values)
+	}
+}
+
+func TestSetCookie(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Mutation(r, "login", func(ctx context.Context, input struct{}) (string, error) {
+		router.SetCookie(ctx, &http.Cookie{
+			Name:  "session",
+			Value: "abc123",
+			Path:  "/",
+		})
+		return "logged in", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/trpc/login", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	cookies := resp.Cookies()
+	found := false
+	for _, c := range cookies {
+		if c.Name == "session" && c.Value == "abc123" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'session' cookie with value 'abc123'")
+	}
+}
+
+func TestMutationContentTypeJSON(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Mutation(r, "createUser", func(ctx context.Context, input CreateUserInput) (User, error) {
+		return User{ID: "1", Name: input.Name, Email: input.Email}, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/trpc/createUser", "application/json", strings.NewReader(`{"name":"Jane","email":"j@e.com"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestMutationContentTypeInvalid(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Mutation(r, "createUser", func(ctx context.Context, input CreateUserInput) (User, error) {
+		return User{}, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/trpc/createUser", "text/plain", strings.NewReader(`{"name":"Jane"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("expected 415, got %d", resp.StatusCode)
+	}
+}
+
+func TestMutationContentTypeEmpty(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Mutation(r, "createUser", func(ctx context.Context, input CreateUserInput) (User, error) {
+		return User{ID: "1", Name: input.Name}, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("POST", srv.URL+"/trpc/createUser", strings.NewReader(`{"name":"Jane"}`))
+	// No Content-Type header
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 for empty Content-Type, got %d", resp.StatusCode)
+	}
+}
+
+func TestHEADRequest(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "health", func(ctx context.Context, input struct{}) (string, error) {
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("HEAD", srv.URL+"/trpc/health", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type 'application/json', got %q", ct)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) != 0 {
+		t.Errorf("expected empty body for HEAD request, got %d bytes", len(body))
+	}
+}
+
+func TestErrorResponseHasNoStack(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "fail", func(ctx context.Context, input struct{}) (string, error) {
+		return "", errors.New(errors.ErrBadRequest, "bad input")
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/fail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	content := string(body)
+
+	// Should not contain "stack" field in the JSON response
+	if strings.Contains(content, `"stack"`) {
+		t.Errorf("expected no 'stack' field in error response, got: %s", content)
+	}
+	// Should still have the standard error fields
+	if !strings.Contains(content, `"code"`) {
+		t.Error("expected 'code' field in error response")
+	}
+	if !strings.Contains(content, `"message"`) {
+		t.Error("expected 'message' field in error response")
+	}
+}
+
+func TestQueryContextCancellation(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	started := make(chan struct{})
+	router.Query(r, "slow", func(ctx context.Context, input struct{}) (string, error) {
+		close(started)
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/trpc/slow", nil)
+
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	resp, err := http.DefaultClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
+	}
+	// The request should have been cancelled — either err is non-nil (client cancelled)
+	// or the server returned an error response. Both are acceptable.
+	if err == nil && resp.StatusCode == http.StatusOK {
+		t.Error("expected request to be cancelled, but got 200 OK")
 	}
 }
