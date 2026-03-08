@@ -115,6 +115,7 @@ func ParseDir(dir string) (*ParseResult, error) {
 				extracted := extractFromFileAST(file)
 				result.Procedures = append(result.Procedures, extracted.Procedures...)
 				result.Merges = append(result.Merges, extracted.Merges...)
+				result.Enums = append(result.Enums, extractEnumsFromAST(file)...)
 			}
 		}
 
@@ -369,6 +370,8 @@ func getProcType(name string) string {
 		return "query"
 	case "Mutation":
 		return "mutation"
+	case "Subscription":
+		return "subscription"
 	default:
 		return ""
 	}
@@ -385,11 +388,16 @@ func extractHandlerTypes(t types.Type) (input, output types.Type) {
 	results := sig.Results()
 
 	// Handler signature: func(ctx context.Context, input I) (O, error)
+	// Subscription signature: func(ctx context.Context, input I) (<-chan O, error)
 	if params.Len() >= 2 {
 		input = params.At(1).Type()
 	}
 	if results.Len() >= 1 {
 		output = results.At(0).Type()
+		// Unwrap channel type for subscriptions
+		if chanType, ok := output.(*types.Chan); ok {
+			output = chanType.Elem()
+		}
 	}
 
 	return input, output
@@ -488,8 +496,103 @@ func extractTypesFromFuncLit(fn *ast.FuncLit, info *types.Info) (input, output t
 		resultField := fn.Type.Results.List[0]
 		if tv, ok := info.Types[resultField.Type]; ok {
 			output = tv.Type
+			// Unwrap channel type for subscriptions
+			if chanType, ok := output.(*types.Chan); ok {
+				output = chanType.Elem()
+			}
 		}
 	}
 
 	return input, output
+}
+
+// extractEnumsFromAST detects enum patterns from AST without type checking.
+// Supports string enums (explicit string literals) and simple iota enums.
+func extractEnumsFromAST(file *ast.File) []EnumInfo {
+	var enums []EnumInfo
+
+	for _, decl := range file.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.CONST {
+			continue
+		}
+
+		// Group const specs by their declared type
+		type constEntry struct {
+			name  string
+			value string
+		}
+		var typeName string
+		var entries []constEntry
+		hasIota := false
+		isString := false
+
+		for i, spec := range genDecl.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+
+			// Determine the type name from the first spec that has one
+			if vs.Type != nil {
+				if ident, ok := vs.Type.(*ast.Ident); ok {
+					if typeName == "" {
+						typeName = ident.Name
+					} else if typeName != ident.Name {
+						// Mixed types in const block — skip
+						typeName = ""
+						break
+					}
+				}
+			}
+
+			for j, name := range vs.Names {
+				if name.Name == "_" {
+					continue
+				}
+
+				var val string
+				// Check for explicit values
+				if j < len(vs.Values) {
+					switch v := vs.Values[j].(type) {
+					case *ast.BasicLit:
+						val = strings.Trim(v.Value, `"`)
+						if v.Kind == token.STRING {
+							isString = true
+						}
+					case *ast.Ident:
+						if v.Name == "iota" {
+							hasIota = true
+							val = fmt.Sprintf("%d", i)
+						}
+					}
+				} else if hasIota {
+					// Implicit iota continuation
+					val = fmt.Sprintf("%d", i)
+				}
+
+				if val != "" {
+					entries = append(entries, constEntry{name: name.Name, value: val})
+				}
+			}
+		}
+
+		if typeName == "" || len(entries) == 0 {
+			continue
+		}
+
+		values := make([]string, len(entries))
+		for i, e := range entries {
+			values[i] = e.value
+		}
+
+		enums = append(enums, EnumInfo{
+			TypeName:      typeName,
+			QualifiedName: typeName,
+			Values:        values,
+			IsString:      isString,
+		})
+	}
+
+	return enums
 }
