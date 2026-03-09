@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
+	"log"
 
+	"github.com/sebasusnik/go-trpc/pkg/adapters/nethttp"
 	gotrpc "github.com/sebasusnik/go-trpc/pkg/router"
 )
 
@@ -72,5 +73,6 @@ func main() {
 	// Prints: user.get, user.create, post.list
 	appRouter.PrintRoutes("/trpc")
 	fmt.Println("Server listening on :8080")
-	http.ListenAndServe(":8080", appRouter.Handler())
+	srv := nethttp.NewServer(appRouter, nethttp.Config{Addr: ":8080"})
+	log.Fatal(srv.Start())
 }

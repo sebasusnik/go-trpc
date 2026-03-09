@@ -20,8 +20,9 @@ func main() {
 	var watch bool
 
 	rootCmd := &cobra.Command{
-		Use:   "gotrpc",
-		Short: "go-trpc CLI - tRPC code generation for Go",
+		Use:     "gotrpc",
+		Short:   "go-trpc CLI - tRPC code generation for Go",
+		Version: Version,
 	}
 
 	generateCmd := &cobra.Command{
