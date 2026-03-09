@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // GenerateOptions configures the TypeScript generation.
@@ -24,7 +25,8 @@ func Generate(opts GenerateOptions) error {
 
 	result, err := ParsePackage(opts.SourcePath, opts.RouterName)
 	if err != nil {
-		// Fallback to simple AST parsing
+		fmt.Fprintf(os.Stderr, "warning: type-checked parsing failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: falling back to AST parser (types may be incomplete)\n")
 		result, err = ParseDir(opts.SourcePath)
 		if err != nil {
 			return fmt.Errorf("failed to parse source: %w", err)
@@ -83,6 +85,15 @@ func generateDTS(result *ParseResult, opts GenerateOptions) string {
 		outputTS string
 	}
 
+	// Build struct defs map for AST fallback type resolution
+	structDefsMap := make(map[string]*StructDef)
+	for i := range result.StructDefs {
+		structDefsMap[result.StructDefs[i].Name] = &result.StructDefs[i]
+	}
+
+	// Track AST-resolved named types for export
+	astNamedTypes := make(map[string]string) // name -> TS definition
+
 	var procs []procTS
 	for _, p := range result.Procedures {
 		inputTS := "void"
@@ -90,9 +101,17 @@ func generateDTS(result *ParseResult, opts GenerateOptions) string {
 
 		if p.InputType != nil {
 			inputTS = mapper.MapType(p.InputType)
+			if inputTS == "Record<string, never>" {
+				inputTS = "void"
+			}
+		} else if p.InputTypeName != "" {
+			inputTS = mapASTType(p.InputTypeName, structDefsMap, astNamedTypes)
 		}
+
 		if p.OutputType != nil {
 			outputTS = mapper.MapType(p.OutputType)
+		} else if p.OutputTypeName != "" {
+			outputTS = mapASTType(p.OutputTypeName, structDefsMap, astNamedTypes)
 		}
 
 		procs = append(procs, procTS{
@@ -103,7 +122,7 @@ func generateDTS(result *ParseResult, opts GenerateOptions) string {
 		})
 	}
 
-	// Write named type definitions
+	// Write named type definitions (from type checker)
 	namedTypes := mapper.NamedTypes()
 	if len(namedTypes) > 0 {
 		// Sort for deterministic output
@@ -116,6 +135,19 @@ func generateDTS(result *ParseResult, opts GenerateOptions) string {
 		for _, name := range names {
 			t := namedTypes[name]
 			b.WriteString(fmt.Sprintf("type %s = %s\n\n", name, t.Definition))
+		}
+	}
+
+	// Write AST-resolved named types (from fallback parser)
+	if len(astNamedTypes) > 0 {
+		astNames := make([]string, 0, len(astNamedTypes))
+		for name := range astNamedTypes {
+			astNames = append(astNames, name)
+		}
+		sort.Strings(astNames)
+
+		for _, name := range astNames {
+			b.WriteString(fmt.Sprintf("type %s = %s\n\n", name, astNamedTypes[name]))
 		}
 	}
 
@@ -223,6 +255,9 @@ func generateDTS(result *ParseResult, opts GenerateOptions) string {
 	for name := range namedTypes {
 		exportNames = append(exportNames, name)
 	}
+	for name := range astNamedTypes {
+		exportNames = append(exportNames, name)
+	}
 	sort.Strings(exportNames)
 	b.WriteString(fmt.Sprintf("export type { %s };\n\n", strings.Join(exportNames, ", ")))
 
@@ -279,4 +314,221 @@ func generateTS(result *ParseResult, opts GenerateOptions) string {
 	b.WriteString("export type ProcedureName = keyof typeof procedures;\n")
 
 	return b.String()
+}
+
+// mapASTType converts a Go type expression string (from AST parsing) to TypeScript.
+// It resolves named types against structDefsMap and registers them in astNamedTypes.
+func mapASTType(goType string, structDefsMap map[string]*StructDef, astNamedTypes map[string]string) string {
+	return mapASTTypeInner(goType, structDefsMap, astNamedTypes, make(map[string]bool))
+}
+
+func mapASTTypeInner(goType string, structDefsMap map[string]*StructDef, astNamedTypes map[string]string, seen map[string]bool) string {
+	goType = strings.TrimSpace(goType)
+
+	// Empty or void
+	if goType == "" || goType == "struct{}" {
+		return "void"
+	}
+
+	// Pointer: *T → T | null
+	if strings.HasPrefix(goType, "*") {
+		inner := mapASTTypeInner(goType[1:], structDefsMap, astNamedTypes, seen)
+		return inner + " | null"
+	}
+
+	// Slice: []T → T[]
+	if strings.HasPrefix(goType, "[]") {
+		inner := mapASTTypeInner(goType[2:], structDefsMap, astNamedTypes, seen)
+		if strings.Contains(inner, "|") {
+			return "(" + inner + ")[]"
+		}
+		return inner + "[]"
+	}
+
+	// Map: map[K]V → Record<K, V>
+	if strings.HasPrefix(goType, "map[") {
+		rest := goType[4:]
+		bracketDepth := 1
+		keyEnd := 0
+		for i, ch := range rest {
+			if ch == '[' {
+				bracketDepth++
+			} else if ch == ']' {
+				bracketDepth--
+				if bracketDepth == 0 {
+					keyEnd = i
+					break
+				}
+			}
+		}
+		keyType := mapASTTypeInner(rest[:keyEnd], structDefsMap, astNamedTypes, seen)
+		valType := mapASTTypeInner(rest[keyEnd+1:], structDefsMap, astNamedTypes, seen)
+		return "Record<" + keyType + ", " + valType + ">"
+	}
+
+	// Inline struct: struct{Name:Type:Tag;...}
+	if strings.HasPrefix(goType, "struct{") && strings.HasSuffix(goType, "}") {
+		inner := goType[7 : len(goType)-1]
+		if inner == "" {
+			return "void"
+		}
+		return mapInlineStructAST(inner, structDefsMap, astNamedTypes, seen)
+	}
+
+	// Qualified types (e.g., time.Time, uuid.UUID)
+	if strings.Contains(goType, ".") {
+		parts := strings.SplitN(goType, ".", 2)
+		switch goType {
+		case "time.Time", "uuid.UUID":
+			return "string"
+		case "json.RawMessage":
+			return "unknown"
+		default:
+			// Try the short name
+			return mapASTTypeInner(parts[1], structDefsMap, astNamedTypes, seen)
+		}
+	}
+
+	// interface{}
+	if goType == "interface{}" {
+		return "unknown"
+	}
+
+	// Go primitives
+	switch goType {
+	case "string":
+		return "string"
+	case "bool":
+		return "boolean"
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64",
+		"float32", "float64":
+		return "number"
+	case "byte":
+		return "number"
+	case "error":
+		return "string"
+	}
+
+	// Named type — look up in struct defs
+	if def, ok := structDefsMap[goType]; ok {
+		if seen[goType] {
+			return goType // prevent infinite recursion
+		}
+		seen[goType] = true
+
+		// Build the TS definition and register it
+		tsDef := mapStructDefToTS(def, structDefsMap, astNamedTypes, seen)
+		astNamedTypes[goType] = tsDef
+		delete(seen, goType)
+		return goType
+	}
+
+	// Unknown type — use the name as-is (might be from another package)
+	if len(goType) > 0 && unicode.IsUpper(rune(goType[0])) {
+		return goType
+	}
+
+	return "unknown"
+}
+
+// mapInlineStructAST converts an inline struct definition string to TypeScript.
+func mapInlineStructAST(fields string, structDefsMap map[string]*StructDef, astNamedTypes map[string]string, seen map[string]bool) string {
+	parts := strings.Split(fields, ";")
+	var tsFields []string
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		// Format: Name:Type:Tag
+		segments := strings.SplitN(part, ":", 3)
+		if len(segments) < 2 {
+			continue
+		}
+		fieldName := segments[0]
+		fieldType := segments[1]
+		tag := ""
+		if len(segments) >= 3 {
+			tag = segments[2]
+		}
+
+		jsonName := lowerFirst(fieldName)
+		optional := false
+		if tag != "" {
+			tagName, tagOptional := parseJSONTagRaw(tag)
+			if tagName == "-" {
+				continue
+			}
+			if tagName != "" {
+				jsonName = tagName
+			}
+			optional = tagOptional
+		}
+
+		tsType := mapASTTypeInner(fieldType, structDefsMap, astNamedTypes, seen)
+		optMark := ""
+		if optional {
+			optMark = "?"
+		}
+		tsFields = append(tsFields, fmt.Sprintf("%s%s: %s", jsonName, optMark, tsType))
+	}
+
+	if len(tsFields) == 0 {
+		return "void"
+	}
+	return "{ " + strings.Join(tsFields, "; ") + " }"
+}
+
+// mapStructDefToTS converts a StructDef to a TypeScript object type string.
+func mapStructDefToTS(def *StructDef, structDefsMap map[string]*StructDef, astNamedTypes map[string]string, seen map[string]bool) string {
+	if len(def.Fields) == 0 {
+		return "Record<string, never>"
+	}
+
+	var tsFields []string
+	for _, f := range def.Fields {
+		if f.JSONName == "-" {
+			continue
+		}
+		tsType := mapASTTypeInner(f.TypeExpr, structDefsMap, astNamedTypes, seen)
+		optMark := ""
+		if f.Optional {
+			optMark = "?"
+		}
+		tsFields = append(tsFields, fmt.Sprintf("  %s%s: %s;", f.JSONName, optMark, tsType))
+	}
+
+	if len(tsFields) == 0 {
+		return "Record<string, never>"
+	}
+	return "{\n" + strings.Join(tsFields, "\n") + "\n}"
+}
+
+// parseJSONTagRaw extracts name and omitempty from a raw struct tag value (with backticks).
+func parseJSONTagRaw(tag string) (string, bool) {
+	tag = strings.Trim(tag, "`")
+	const prefix = `json:"`
+	idx := strings.Index(tag, prefix)
+	if idx < 0 {
+		return "", false
+	}
+	rest := tag[idx+len(prefix):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return "", false
+	}
+	jsonVal := rest[:end]
+	if jsonVal == "-" {
+		return "-", false
+	}
+	parts := strings.Split(jsonVal, ",")
+	name := parts[0]
+	optional := false
+	for _, p := range parts[1:] {
+		if p == "omitempty" {
+			optional = true
+		}
+	}
+	return name, optional
 }

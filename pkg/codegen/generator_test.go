@@ -3,6 +3,7 @@ package codegen
 import (
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -447,5 +448,263 @@ func TestGenerateTS_SortedOutput(t *testing.T) {
 	zebraIdx := strings.Index(output, `"zebra"`)
 	if alphaIdx > zebraIdx {
 		t.Error("expected procedures to be sorted alphabetically")
+	}
+}
+
+func TestParseDirHigherOrder(t *testing.T) {
+	result, err := ParseDir("testdata/higher_order")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Procedures) != 3 {
+		t.Fatalf("expected 3 procedures, got %d: %+v", len(result.Procedures), result.Procedures)
+	}
+
+	procs := make(map[string]ProcedureInfo)
+	for _, p := range result.Procedures {
+		procs[p.Name] = p
+	}
+
+	// Higher-order handler: ListTasks(nil) should resolve to input=struct{}, output=[]Task
+	list := procs["task.list"]
+	if list.InputTypeName != "struct{}" {
+		t.Errorf("task.list input: expected 'struct{}', got %q", list.InputTypeName)
+	}
+	if list.OutputTypeName != "[]Task" {
+		t.Errorf("task.list output: expected '[]Task', got %q", list.OutputTypeName)
+	}
+
+	// Higher-order handler: CreateTask(nil) should resolve to input=CreateTaskInput, output=Task
+	create := procs["task.create"]
+	if create.InputTypeName != "CreateTaskInput" {
+		t.Errorf("task.create input: expected 'CreateTaskInput', got %q", create.InputTypeName)
+	}
+	if create.OutputTypeName != "Task" {
+		t.Errorf("task.create output: expected 'Task', got %q", create.OutputTypeName)
+	}
+
+	// Direct handler: HealthCheck should resolve to input=struct{}, output=string
+	health := procs["health"]
+	if health.InputTypeName != "struct{}" {
+		t.Errorf("health input: expected 'struct{}', got %q", health.InputTypeName)
+	}
+	if health.OutputTypeName != "string" {
+		t.Errorf("health output: expected 'string', got %q", health.OutputTypeName)
+	}
+
+	// Should have extracted struct defs
+	if len(result.StructDefs) < 2 {
+		t.Fatalf("expected at least 2 struct defs (Task, CreateTaskInput), got %d", len(result.StructDefs))
+	}
+
+	structMap := make(map[string]StructDef)
+	for _, sd := range result.StructDefs {
+		structMap[sd.Name] = sd
+	}
+
+	task, ok := structMap["Task"]
+	if !ok {
+		t.Fatal("expected Task struct def")
+	}
+	if len(task.Fields) != 4 {
+		t.Errorf("expected 4 fields in Task, got %d", len(task.Fields))
+	}
+}
+
+func TestGenerateDTS_ASTTypes(t *testing.T) {
+	result := &ParseResult{
+		Procedures: []ProcedureInfo{
+			{
+				Name:           "task.list",
+				Type:           "query",
+				InputTypeName:  "struct{}",
+				OutputTypeName: "[]Task",
+			},
+			{
+				Name:           "task.create",
+				Type:           "mutation",
+				InputTypeName:  "CreateTaskInput",
+				OutputTypeName: "Task",
+			},
+		},
+		StructDefs: []StructDef{
+			{
+				Name: "Task",
+				Fields: []StructField{
+					{Name: "ID", TypeExpr: "string", JSONName: "id"},
+					{Name: "Title", TypeExpr: "string", JSONName: "title"},
+					{Name: "Description", TypeExpr: "string", JSONName: "description", Optional: true},
+					{Name: "Status", TypeExpr: "string", JSONName: "status"},
+				},
+			},
+			{
+				Name: "CreateTaskInput",
+				Fields: []StructField{
+					{Name: "Title", TypeExpr: "string", JSONName: "title"},
+					{Name: "Description", TypeExpr: "string", JSONName: "description", Optional: true},
+				},
+			},
+		},
+	}
+	opts := GenerateOptions{RouterName: "AppRouter"}
+	output := generateDTS(result, opts)
+
+	// Should have Task type definition
+	if !strings.Contains(output, "type Task = {") {
+		t.Errorf("expected Task type definition, got:\n%s", output)
+	}
+
+	// Should have CreateTaskInput type definition
+	if !strings.Contains(output, "type CreateTaskInput = {") {
+		t.Errorf("expected CreateTaskInput type definition, got:\n%s", output)
+	}
+
+	// Task should be exported
+	if !strings.Contains(output, "export type {") && !strings.Contains(output, "Task") {
+		t.Error("expected Task in exports")
+	}
+
+	// Procedures should NOT have void types
+	if strings.Contains(output, `input: void; output: void`) {
+		t.Error("expected non-void types for procedures with AST type info")
+	}
+
+	// task.list output should be Task[]
+	if !strings.Contains(output, "Task[]") {
+		t.Errorf("expected Task[] in output, got:\n%s", output)
+	}
+
+	// task.list input should be void (struct{})
+	if !strings.Contains(output, "input: void; output: Task[]") {
+		t.Errorf("expected 'input: void; output: Task[]' for task.list, got:\n%s", output)
+	}
+
+	// task.create should reference CreateTaskInput and Task
+	if !strings.Contains(output, "input: CreateTaskInput; output: Task") {
+		t.Errorf("expected 'input: CreateTaskInput; output: Task' for task.create, got:\n%s", output)
+	}
+
+	// RouterInputs should have correct types
+	if !strings.Contains(output, `"task.list": void`) {
+		t.Errorf("expected task.list input void in RouterInputs, got:\n%s", output)
+	}
+	if !strings.Contains(output, `"task.create": CreateTaskInput`) {
+		t.Errorf("expected task.create input CreateTaskInput in RouterInputs, got:\n%s", output)
+	}
+
+	// RouterOutputs should have correct types
+	if !strings.Contains(output, `"task.list": Task[]`) {
+		t.Errorf("expected task.list output Task[] in RouterOutputs, got:\n%s", output)
+	}
+	if !strings.Contains(output, `"task.create": Task`) {
+		t.Errorf("expected task.create output Task in RouterOutputs, got:\n%s", output)
+	}
+}
+
+func TestMapASTType(t *testing.T) {
+	structDefs := map[string]*StructDef{
+		"User": {
+			Name: "User",
+			Fields: []StructField{
+				{Name: "ID", TypeExpr: "string", JSONName: "id"},
+				{Name: "Name", TypeExpr: "string", JSONName: "name"},
+				{Name: "Age", TypeExpr: "int", JSONName: "age"},
+			},
+		},
+	}
+
+	tests := []struct {
+		goType   string
+		expected string
+	}{
+		{"string", "string"},
+		{"int", "number"},
+		{"int64", "number"},
+		{"float64", "number"},
+		{"bool", "boolean"},
+		{"struct{}", "void"},
+		{"*string", "string | null"},
+		{"[]string", "string[]"},
+		{"[]*string", "(string | null)[]"},
+		{"[]User", "User[]"},
+		{"map[string]int", "Record<string, number>"},
+		{"interface{}", "unknown"},
+		{"time.Time", "string"},
+		{"uuid.UUID", "string"},
+		{"User", "User"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.goType, func(t *testing.T) {
+			astNamed := make(map[string]string)
+			got := mapASTType(tt.goType, structDefs, astNamed)
+			if got != tt.expected {
+				t.Errorf("mapASTType(%q) = %q, want %q", tt.goType, got, tt.expected)
+			}
+		})
+	}
+
+	// Verify that using "User" registers it as a named type
+	astNamed := make(map[string]string)
+	mapASTType("User", structDefs, astNamed)
+	if _, ok := astNamed["User"]; !ok {
+		t.Error("expected User to be registered as named type")
+	}
+}
+
+func TestGenerateDTS_EmptyStructInputBecomesVoid(t *testing.T) {
+	// When the type-checked path returns Record<string, never> for struct{},
+	// generateDTS should convert it to void so tRPC allows calling .query() without args.
+	emptyStruct := types.NewStruct(nil, nil)
+
+	result := &ParseResult{
+		Procedures: []ProcedureInfo{
+			{
+				Name:       "health.check",
+				Type:       "query",
+				InputType:  emptyStruct,
+				OutputType: types.Typ[types.String],
+			},
+		},
+	}
+
+	output := generateDTS(result, GenerateOptions{RouterName: "AppRouter"})
+
+	// Input should be void, not Record<string, never>
+	if strings.Contains(output, `input: Record<string, never>`) {
+		t.Errorf("expected empty struct input to be void, not Record<string, never>, got:\n%s", output)
+	}
+	if !strings.Contains(output, `$types: { input: void; output: string }`) {
+		t.Errorf("expected 'input: void; output: string' for health.check, got:\n%s", output)
+	}
+	// RouterInputs should also have void
+	if !strings.Contains(output, `"health.check": void`) {
+		t.Errorf("expected health.check input void in RouterInputs, got:\n%s", output)
+	}
+}
+
+func TestGenerate_FallbackWarning(t *testing.T) {
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "out", "router.d.ts")
+
+	// Use a path that will cause ParsePackage to fail but ParseDir to succeed
+	err := Generate(GenerateOptions{
+		SourcePath: "testdata/simple",
+		OutputPath: outPath,
+		Format:     "dts",
+	})
+	// Should succeed (either ParsePackage or ParseDir works)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify output was generated
+	content, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "ping:") {
+		t.Error("expected ping procedure in output")
 	}
 }

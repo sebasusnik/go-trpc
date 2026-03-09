@@ -20,6 +20,10 @@ type ProcedureInfo struct {
 	InputType  types.Type
 	OutputType types.Type
 	RouterVar  string // variable name of the router this is registered on
+
+	// AST-only fields (used when type checking is unavailable)
+	InputTypeName  string // Go type expression as string (e.g., "ListTasksInput")
+	OutputTypeName string // Go type expression as string (e.g., "Task")
 }
 
 // MergeInfo holds information about a router Merge() call.
@@ -37,11 +41,26 @@ type EnumInfo struct {
 	IsString      bool     // true if underlying type is string, false if int
 }
 
+// StructField holds information about a struct field extracted from AST.
+type StructField struct {
+	Name     string
+	TypeExpr string // Go type expression as string (e.g., "string", "[]Task")
+	JSONName string
+	Optional bool // from omitempty tag
+}
+
+// StructDef holds information about a struct type extracted from AST.
+type StructDef struct {
+	Name   string
+	Fields []StructField
+}
+
 // ParseResult holds the result of parsing Go source for tRPC procedures.
 type ParseResult struct {
 	Procedures []ProcedureInfo
 	Merges     []MergeInfo
 	Enums      []EnumInfo
+	StructDefs []StructDef
 	RouterVar  string // name of the router variable (e.g., "appRouter")
 }
 
@@ -116,6 +135,7 @@ func ParseDir(dir string) (*ParseResult, error) {
 				result.Procedures = append(result.Procedures, extracted.Procedures...)
 				result.Merges = append(result.Merges, extracted.Merges...)
 				result.Enums = append(result.Enums, extractEnumsFromAST(file)...)
+				result.StructDefs = append(result.StructDefs, extractStructDefsFromAST(file)...)
 			}
 		}
 
@@ -262,6 +282,14 @@ func exprToVarName(expr ast.Expr) string {
 func extractFromFileAST(file *ast.File) fileExtractionResult {
 	var result fileExtractionResult
 
+	// Build function declaration map for resolving handler types
+	funcDecls := make(map[string]*ast.FuncDecl)
+	for _, decl := range file.Decls {
+		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Recv == nil {
+			funcDecls[fd.Name.Name] = fd
+		}
+	}
+
 	ast.Inspect(file, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -300,16 +328,212 @@ func extractFromFileAST(file *ast.File) fileExtractionResult {
 		}
 		name := strings.Trim(nameArg.Value, `"`)
 
+		// Try to extract input/output type names from the handler argument
+		inputName, outputName := extractHandlerTypeNamesAST(call.Args[2], funcDecls)
+
 		result.Procedures = append(result.Procedures, ProcedureInfo{
-			Name:      name,
-			Type:      procType,
-			RouterVar: routerVar,
+			Name:           name,
+			Type:           procType,
+			RouterVar:      routerVar,
+			InputTypeName:  inputName,
+			OutputTypeName: outputName,
 		})
 
 		return true
 	})
 
 	return result
+}
+
+// extractHandlerTypeNamesAST extracts input/output type names from a handler AST expression.
+func extractHandlerTypeNamesAST(expr ast.Expr, funcDecls map[string]*ast.FuncDecl) (input, output string) {
+	switch h := expr.(type) {
+	case *ast.FuncLit:
+		// Inline handler: func(ctx context.Context, input T) (O, error) { ... }
+		return extractTypesFromFuncType(h.Type)
+
+	case *ast.CallExpr:
+		// Higher-order handler: ListTasks(store) — resolve the function's return type
+		funcName := callExprFuncName(h)
+		if funcName == "" {
+			return "", ""
+		}
+		fd, ok := funcDecls[funcName]
+		if !ok || fd.Type.Results == nil || len(fd.Type.Results.List) == 0 {
+			return "", ""
+		}
+		// The return type should be a func type
+		if ft, ok := fd.Type.Results.List[0].Type.(*ast.FuncType); ok {
+			return extractTypesFromFuncType(ft)
+		}
+
+	case *ast.Ident:
+		// Direct function reference: HealthCheck
+		fd, ok := funcDecls[h.Name]
+		if !ok {
+			return "", ""
+		}
+		return extractTypesFromFuncType(fd.Type)
+	}
+
+	return "", ""
+}
+
+// callExprFuncName extracts the function name from a call expression.
+func callExprFuncName(call *ast.CallExpr) string {
+	switch fn := call.Fun.(type) {
+	case *ast.Ident:
+		return fn.Name
+	case *ast.SelectorExpr:
+		return fn.Sel.Name
+	}
+	return ""
+}
+
+// extractTypesFromFuncType extracts input/output type names from a func type AST.
+// Expects: func(ctx context.Context, input I) (O, error)
+func extractTypesFromFuncType(ft *ast.FuncType) (input, output string) {
+	if ft == nil {
+		return "", ""
+	}
+
+	// Input: second parameter
+	if ft.Params != nil && len(ft.Params.List) >= 2 {
+		input = exprToTypeString(ft.Params.List[1].Type)
+	}
+
+	// Output: first result (unwrap channel for subscriptions)
+	if ft.Results != nil && len(ft.Results.List) >= 1 {
+		resultExpr := ft.Results.List[0].Type
+		// Unwrap <-chan T for subscriptions
+		if chanType, ok := resultExpr.(*ast.ChanType); ok {
+			resultExpr = chanType.Value
+		}
+		output = exprToTypeString(resultExpr)
+	}
+
+	return input, output
+}
+
+// exprToTypeString converts an AST type expression to a Go type string.
+func exprToTypeString(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.SelectorExpr:
+		if pkg, ok := e.X.(*ast.Ident); ok {
+			return pkg.Name + "." + e.Sel.Name
+		}
+		return e.Sel.Name
+	case *ast.StarExpr:
+		return "*" + exprToTypeString(e.X)
+	case *ast.ArrayType:
+		if e.Len == nil {
+			return "[]" + exprToTypeString(e.Elt)
+		}
+		return "[]" + exprToTypeString(e.Elt)
+	case *ast.MapType:
+		return "map[" + exprToTypeString(e.Key) + "]" + exprToTypeString(e.Value)
+	case *ast.StructType:
+		if e.Fields == nil || len(e.Fields.List) == 0 {
+			return "struct{}"
+		}
+		var parts []string
+		for _, f := range e.Fields.List {
+			typeStr := exprToTypeString(f.Type)
+			for _, name := range f.Names {
+				tag := ""
+				if f.Tag != nil {
+					tag = f.Tag.Value
+				}
+				parts = append(parts, name.Name+":"+typeStr+":"+tag)
+			}
+		}
+		return "struct{" + strings.Join(parts, ";") + "}"
+	case *ast.InterfaceType:
+		return "interface{}"
+	}
+	return ""
+}
+
+// extractStructDefsFromAST extracts struct type definitions from a Go AST file.
+func extractStructDefsFromAST(file *ast.File) []StructDef {
+	var defs []StructDef
+
+	for _, decl := range file.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.TYPE {
+			continue
+		}
+
+		for _, spec := range genDecl.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				continue
+			}
+
+			st, ok := ts.Type.(*ast.StructType)
+			if !ok {
+				continue
+			}
+
+			def := StructDef{Name: ts.Name.Name}
+			if st.Fields != nil {
+				for _, field := range st.Fields.List {
+					typeStr := exprToTypeString(field.Type)
+					jsonName := ""
+					optional := false
+					if field.Tag != nil {
+						tag := strings.Trim(field.Tag.Value, "`")
+						jsonName, optional = parseJSONTagFromString(tag)
+					}
+
+					for _, name := range field.Names {
+						fn := jsonName
+						if fn == "" {
+							fn = name.Name
+						}
+						def.Fields = append(def.Fields, StructField{
+							Name:     name.Name,
+							TypeExpr: typeStr,
+							JSONName: fn,
+							Optional: optional,
+						})
+					}
+				}
+			}
+			defs = append(defs, def)
+		}
+	}
+
+	return defs
+}
+
+// parseJSONTagFromString extracts JSON field name and omitempty from a struct tag string.
+func parseJSONTagFromString(tag string) (name string, optional bool) {
+	// Find json:"..." in the tag
+	const prefix = `json:"`
+	idx := strings.Index(tag, prefix)
+	if idx < 0 {
+		return "", false
+	}
+	rest := tag[idx+len(prefix):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return "", false
+	}
+	jsonVal := rest[:end]
+	if jsonVal == "-" {
+		return "-", false
+	}
+	parts := strings.Split(jsonVal, ",")
+	name = parts[0]
+	for _, p := range parts[1:] {
+		if p == "omitempty" {
+			optional = true
+		}
+	}
+	return name, optional
 }
 
 // resolvePrefixes applies Merge() namespace prefixes to procedure names.
