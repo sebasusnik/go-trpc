@@ -1,9 +1,8 @@
 package router_test
 
 import (
-	"bytes"
 	"context"
-	"os"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -12,7 +11,12 @@ import (
 )
 
 func TestPrintRoutes(t *testing.T) {
-	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	var buf strings.Builder
+	logger := router.LoggerFunc(func(format string, args ...any) {
+		fmt.Fprintf(&buf, format+"\n", args...)
+	})
+
+	r := router.NewRouter(router.WithLogger(logger))
 	router.Query(r, "getUser", func(ctx context.Context, input struct{}) (string, error) {
 		return "", nil
 	})
@@ -25,24 +29,9 @@ func TestPrintRoutes(t *testing.T) {
 		return ch, nil
 	})
 
-	// Capture stdout
-	oldStdout := os.Stdout
-	rr, ww, _ := os.Pipe()
-	os.Stdout = ww
-
 	r.PrintRoutes("/trpc")
 
-	ww.Close()
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	buf.ReadFrom(rr)
 	output := buf.String()
-
-	// Verify header
-	if !strings.Contains(output, "Procedures:") {
-		t.Errorf("expected 'Procedures:' header, got: %s", output)
-	}
 
 	// Verify all three procedure types
 	if !strings.Contains(output, "query") || !strings.Contains(output, "getUser") {

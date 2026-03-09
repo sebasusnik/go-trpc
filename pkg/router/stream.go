@@ -29,7 +29,10 @@ func (r *Router) handleBatchStream(w http.ResponseWriter, req *http.Request, nam
 	w.WriteHeader(http.StatusOK)
 
 	// Write opening brace
-	fmt.Fprint(w, "{")
+	if _, err := fmt.Fprint(w, "{"); err != nil {
+		r.logger.Error("batch stream write error: %v", err)
+		return
+	}
 	flusher.Flush()
 
 	resultCh := make(chan indexedResult, len(names))
@@ -60,22 +63,38 @@ func (r *Router) handleBatchStream(w http.ResponseWriter, req *http.Request, nam
 	}()
 
 	// Stream results as they arrive
+	var writeErr error
 	first := true
 	for ir := range resultCh {
+		if writeErr != nil {
+			continue // drain channel but skip writes
+		}
+
 		resultBytes, err := json.Marshal(ir.Result)
 		if err != nil {
+			r.logger.Error("batch stream marshal error: %v", err)
 			continue
 		}
 
 		if !first {
-			fmt.Fprint(w, ",")
+			if _, writeErr = fmt.Fprint(w, ","); writeErr != nil {
+				r.logger.Error("batch stream write error: %v", writeErr)
+				continue
+			}
 		}
-		fmt.Fprintf(w, "\"%d\":%s", ir.Index, resultBytes)
+		if _, writeErr = fmt.Fprintf(w, "\"%d\":%s", ir.Index, resultBytes); writeErr != nil {
+			r.logger.Error("batch stream write error: %v", writeErr)
+			continue
+		}
 		flusher.Flush()
 		first = false
 	}
 
 	// Write closing brace
-	fmt.Fprint(w, "}")
-	flusher.Flush()
+	if writeErr == nil {
+		if _, err := fmt.Fprint(w, "}"); err != nil {
+			r.logger.Error("batch stream write error: %v", err)
+		}
+		flusher.Flush()
+	}
 }

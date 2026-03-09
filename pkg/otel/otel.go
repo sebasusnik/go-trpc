@@ -63,11 +63,14 @@ func Middleware(opts ...Option) router.Middleware {
 	}
 	meter := mp.Meter(instrumentationName)
 
-	duration, _ := meter.Float64Histogram(
+	duration, err := meter.Float64Histogram(
 		"rpc.server.duration",
 		metric.WithDescription("Duration of tRPC procedure calls"),
 		metric.WithUnit("ms"),
 	)
+	if err != nil {
+		otel.Handle(err)
+	}
 
 	return func(next router.Handler) router.Handler {
 		return func(ctx context.Context, req router.Request) (interface{}, error) {

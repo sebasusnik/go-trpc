@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,7 +18,10 @@ func ToLambdaHandler(r *gotrpc.Router) func(ctx context.Context, req events.APIG
 	return func(ctx context.Context, apiReq events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 		httpReq, err := toHTTPRequest(ctx, apiReq)
 		if err != nil {
-			return events.APIGatewayV2HTTPResponse{StatusCode: 500, Body: `{"error":"failed to convert request"}`}, nil
+			return events.APIGatewayV2HTTPResponse{
+				StatusCode: 500,
+				Body:       fmt.Sprintf(`{"error":"failed to convert request: %s"}`, err.Error()),
+			}, nil
 		}
 
 		rec := httptest.NewRecorder()

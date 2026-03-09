@@ -49,7 +49,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(configPath); err == nil {
 		fmt.Printf("%s already exists, skipping\n", configFileName)
 	} else {
-		data, _ := json.MarshalIndent(cfg, "", "  ")
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal config: %w", err)
+		}
 		data = append(data, '\n')
 		if err := os.WriteFile(configPath, data, 0o644); err != nil {
 			return fmt.Errorf("failed to write %s: %w", configFileName, err)
@@ -65,7 +68,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	gitignorePath := filepath.Join(generatedDir, ".gitignore")
 	if _, err := os.Stat(gitignorePath); err != nil {
-		os.WriteFile(gitignorePath, []byte(generatedGitignore), 0o644)
+		if err := os.WriteFile(gitignorePath, []byte(generatedGitignore), 0o644); err != nil {
+			return fmt.Errorf("failed to write .gitignore: %w", err)
+		}
 		fmt.Printf("Created %s\n", filepath.Join(webDir, "src/generated/.gitignore"))
 	}
 

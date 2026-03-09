@@ -28,18 +28,18 @@ type TrackedEvent struct {
 func (r *Router) handleSubscription(w http.ResponseWriter, req *http.Request, path string) {
 	proc, ok := r.procedures[path]
 	if !ok {
-		writeErrorResponse(w, trpcerrors.ErrMethodNotFound, "procedure not found: "+path, http.StatusNotFound, path)
+		r.writeErrorResponse(w, trpcerrors.ErrMethodNotFound, "procedure not found: "+path, http.StatusNotFound, path)
 		return
 	}
 
 	if proc.Type != ProcedureSubscription {
-		writeErrorResponse(w, trpcerrors.ErrMethodNotFound, "procedure is not a subscription: "+path, http.StatusNotFound, path)
+		r.writeErrorResponse(w, trpcerrors.ErrMethodNotFound, "procedure is not a subscription: "+path, http.StatusNotFound, path)
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeErrorResponse(w, trpcerrors.ErrInternalError, "streaming not supported", http.StatusInternalServerError, path)
+		r.writeErrorResponse(w, trpcerrors.ErrInternalError, "streaming not supported", http.StatusInternalServerError, path)
 		return
 	}
 
@@ -54,7 +54,7 @@ func (r *Router) handleSubscription(w http.ResponseWriter, req *http.Request, pa
 	if r.transformer != nil && len(inputJSON) > 0 {
 		plain, _, err := r.transformer.TransformInput(inputJSON)
 		if err != nil {
-			writeErrorResponse(w, trpcerrors.ErrParseError, "transformer input error: "+err.Error(), http.StatusBadRequest, path)
+			r.writeErrorResponse(w, trpcerrors.ErrParseError, "transformer input error: "+err.Error(), http.StatusBadRequest, path)
 			return
 		}
 		inputJSON = plain
@@ -68,7 +68,7 @@ func (r *Router) handleSubscription(w http.ResponseWriter, req *http.Request, pa
 	ch, err := r.callSubscription(ctx, proc, inputJSON, path)
 	if err != nil {
 		result := r.toErrorResult(err, path)
-		writeResult(w, result)
+		r.writeResult(w, result)
 		return
 	}
 
@@ -91,7 +91,10 @@ func (r *Router) handleSubscription(w http.ResponseWriter, req *http.Request, pa
 		case val, ok := <-ch:
 			if !ok {
 				// Channel closed — send stopped event
-				fmt.Fprintf(w, "event: stopped\ndata: \n\n")
+				if _, err := fmt.Fprintf(w, "event: stopped\ndata: \n\n"); err != nil {
+					r.logger.Debug("subscription %s write error: %v", path, err)
+					return
+				}
 				flusher.Flush()
 				r.logger.Debug("subscription %s stopped", path)
 				return
@@ -117,7 +120,10 @@ func (r *Router) handleSubscription(w http.ResponseWriter, req *http.Request, pa
 				continue
 			}
 
-			fmt.Fprintf(w, "id: %s\nevent: data\ndata: %s\n\n", id, data)
+			if _, err := fmt.Fprintf(w, "id: %s\nevent: data\ndata: %s\n\n", id, data); err != nil {
+				r.logger.Debug("subscription %s write error: %v", path, err)
+				return
+			}
 			flusher.Flush()
 		}
 	}

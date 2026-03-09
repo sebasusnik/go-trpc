@@ -50,7 +50,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	prefix := r.basePath + "/"
 	path := strings.TrimPrefix(req.URL.Path, prefix)
 	if path == "" || path == req.URL.Path {
-		writeErrorResponse(w, trpcerrors.ErrMethodNotFound, "invalid trpc path", http.StatusNotFound, "")
+		r.writeErrorResponse(w, trpcerrors.ErrMethodNotFound, "invalid trpc path", http.StatusNotFound, "")
 		return
 	}
 
@@ -69,7 +69,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 	default:
-		writeErrorResponse(w, trpcerrors.ErrMethodNotFound, "method not allowed", http.StatusMethodNotAllowed, path)
+		r.writeErrorResponse(w, trpcerrors.ErrMethodNotFound, "method not allowed", http.StatusMethodNotAllowed, path)
 	}
 }
 
@@ -80,7 +80,7 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request, path stri
 		var batchInput map[string]json.RawMessage
 		if inputRaw != "" {
 			if err := json.Unmarshal([]byte(inputRaw), &batchInput); err != nil {
-				writeErrorResponse(w, trpcerrors.ErrParseError, "failed to parse batch input", http.StatusBadRequest, path)
+				r.writeErrorResponse(w, trpcerrors.ErrParseError, "failed to parse batch input", http.StatusBadRequest, path)
 				return
 			}
 		}
@@ -115,21 +115,21 @@ func (r *Router) handleQuery(w http.ResponseWriter, req *http.Request, path stri
 
 	result := r.callProcedure(w, req, path, ProcedureQuery, inputJSON)
 	r.logger.Debug("query %s result=%+v", path, result)
-	writeResult(w, result)
+	r.writeResult(w, result)
 }
 
 func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path string, isBatch bool, isStream bool) {
 	// Validate Content-Type for POST requests
 	ct := req.Header.Get("Content-Type")
 	if ct != "" && !strings.HasPrefix(ct, "application/json") {
-		writeErrorResponse(w, trpcerrors.ErrParseError, "unsupported Content-Type: expected application/json", http.StatusUnsupportedMediaType, path)
+		r.writeErrorResponse(w, trpcerrors.ErrParseError, "unsupported Content-Type: expected application/json", http.StatusUnsupportedMediaType, path)
 		return
 	}
 
 	defer req.Body.Close()
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
-		writeErrorResponse(w, trpcerrors.ErrParseError, "failed to read body", http.StatusBadRequest, path)
+		r.writeErrorResponse(w, trpcerrors.ErrParseError, "failed to read body", http.StatusBadRequest, path)
 		return
 	}
 
@@ -142,7 +142,7 @@ func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path s
 				// Try as object keyed by index
 				var batchMap map[string]json.RawMessage
 				if err2 := json.Unmarshal(body, &batchMap); err2 != nil {
-					writeErrorResponse(w, trpcerrors.ErrParseError, "failed to parse batch body", http.StatusBadRequest, path)
+					r.writeErrorResponse(w, trpcerrors.ErrParseError, "failed to parse batch body", http.StatusBadRequest, path)
 					return
 				}
 				for i := 0; i < len(names); i++ {
@@ -178,7 +178,7 @@ func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path s
 
 	result := r.callProcedure(w, req, path, ProcedureMutation, inputJSON)
 	r.logger.Debug("mutation %s result=%+v", path, result)
-	writeResult(w, result)
+	r.writeResult(w, result)
 }
 
 func (r *Router) handleBatch(w http.ResponseWriter, req *http.Request, names []string, getInput func(i int) []byte) {
@@ -307,23 +307,22 @@ func errorResult(code int, message, path string) trpcResult {
 	}
 }
 
-func writeErrorResponse(w http.ResponseWriter, code int, message string, httpStatus int, path string) {
+func (r *Router) writeErrorResponse(w http.ResponseWriter, code int, message string, httpStatus int, path string) {
 	result := errorResult(code, message, path)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus)
 	if err := json.NewEncoder(w).Encode(result); err != nil {
-		// Client likely disconnected; nothing more we can do.
-		_ = err
+		r.logger.Error("failed to encode error response: %v", err)
 	}
 }
 
-func writeResult(w http.ResponseWriter, result trpcResult) {
+func (r *Router) writeResult(w http.ResponseWriter, result trpcResult) {
 	w.Header().Set("Content-Type", "application/json")
 	if result.Error != nil {
 		w.WriteHeader(result.Error.Data.HTTPStatus)
 	}
 	if err := json.NewEncoder(w).Encode(result); err != nil {
-		_ = err
+		r.logger.Error("failed to encode response: %v", err)
 	}
 }
 

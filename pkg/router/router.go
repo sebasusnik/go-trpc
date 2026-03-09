@@ -3,7 +3,6 @@ package router
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -106,7 +105,7 @@ func (r *Router) Handler() http.Handler {
 	return r
 }
 
-// PrintRoutes prints all registered procedures to stdout.
+// PrintRoutes logs all registered procedures via the router's logger.
 func (r *Router) PrintRoutes(basePath string) {
 	names := make([]string, 0, len(r.procedures))
 	for name := range r.procedures {
@@ -114,7 +113,6 @@ func (r *Router) PrintRoutes(basePath string) {
 	}
 	sort.Strings(names)
 
-	fmt.Printf("  Procedures:\n")
 	for _, name := range names {
 		proc := r.procedures[name]
 		method := "GET"
@@ -126,7 +124,7 @@ func (r *Router) PrintRoutes(basePath string) {
 		case ProcedureSubscription:
 			kind = "subscription"
 		}
-		fmt.Printf("    %-8s %-20s %s  %s/%s\n", kind, name, method, basePath, name)
+		r.logger.Info("  %-8s %-20s %s  %s/%s", kind, name, method, basePath, name)
 	}
 }
 

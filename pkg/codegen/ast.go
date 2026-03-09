@@ -91,7 +91,7 @@ func ParsePackage(pattern string, routerVar string) (*ParseResult, error) {
 	for _, pkg := range pkgs {
 		if len(pkg.Errors) > 0 {
 			for _, e := range pkg.Errors {
-				fmt.Printf("warning: %s\n", e)
+				fmt.Fprintf(os.Stderr, "warning: %s\n", e)
 			}
 		}
 
@@ -126,6 +126,7 @@ func ParseDir(dir string) (*ParseResult, error) {
 		fset := token.NewFileSet()
 		pkgs, err := parser.ParseDir(fset, path, nil, parser.ParseComments)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to parse %s: %v\n", path, err)
 			return nil
 		}
 

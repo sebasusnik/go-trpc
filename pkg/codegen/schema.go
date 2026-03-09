@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -18,11 +19,14 @@ type SchemaResponse struct {
 
 // SchemaHandler returns an http.HandlerFunc that serves the introspection schema.
 // It takes a list of procedure infos (typically from the router at startup).
-func SchemaHandler(procedures []SchemaInfo) http.HandlerFunc {
-	resp, _ := json.Marshal(SchemaResponse{Procedures: procedures})
+func SchemaHandler(procedures []SchemaInfo) (http.HandlerFunc, error) {
+	resp, err := json.Marshal(SchemaResponse{Procedures: procedures})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal schema: %w", err)
+	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(resp)
-	}
+		_, _ = w.Write(resp)
+	}, nil
 }

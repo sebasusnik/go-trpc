@@ -15,7 +15,10 @@ func TestSchemaHandler(t *testing.T) {
 		{Name: "createUser", Type: "mutation"},
 	}
 
-	handler := codegen.SchemaHandler(procedures)
+	handler, err := codegen.SchemaHandler(procedures)
+	if err != nil {
+		t.Fatalf("SchemaHandler returned error: %v", err)
+	}
 
 	req := httptest.NewRequest("GET", "/__schema", nil)
 	w := httptest.NewRecorder()
@@ -47,7 +50,10 @@ func TestSchemaHandler(t *testing.T) {
 }
 
 func TestSchemaHandlerEmpty(t *testing.T) {
-	handler := codegen.SchemaHandler([]codegen.SchemaInfo{})
+	handler, err := codegen.SchemaHandler([]codegen.SchemaInfo{})
+	if err != nil {
+		t.Fatalf("SchemaHandler returned error: %v", err)
+	}
 
 	req := httptest.NewRequest("GET", "/__schema", nil)
 	w := httptest.NewRecorder()

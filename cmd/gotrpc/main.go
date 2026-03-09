@@ -41,7 +41,10 @@ If no path argument is given, reads configuration from gotrpc.json in the curren
 				sourcePath = args[0]
 			} else {
 				// Try to load config
-				cwd, _ := os.Getwd()
+				cwd, err := os.Getwd()
+				if err != nil {
+					return fmt.Errorf("failed to get working directory: %w", err)
+				}
 				cfg, err := LoadConfig(cwd)
 				if err != nil {
 					return fmt.Errorf("no path argument and %v\nUsage: gotrpc generate [path] or create a gotrpc.json", err)
