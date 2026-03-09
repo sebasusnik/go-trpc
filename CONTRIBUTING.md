@@ -5,7 +5,8 @@
 ```bash
 git clone https://github.com/sebasusnik/go-trpc.git
 cd go-trpc
-make check   # lint + vet + test (run this before every PR)
+make setup   # enable pre-commit hooks (lint + vet + test)
+make check   # run manually: lint + vet + test
 ```
 
 Requirements: Go 1.25+, [golangci-lint](https://golangci-lint.run/welcome/install/) v2+.

@@ -1,4 +1,4 @@
-.PHONY: build test test-race lint vet fmt coverage check clean
+.PHONY: build test test-race lint vet fmt coverage check clean setup
 
 build:
 	go build -o gotrpc ./cmd/gotrpc
@@ -23,6 +23,9 @@ coverage:
 	go tool cover -func=coverage.out
 
 check: lint vet test-race
+
+setup:
+	git config core.hooksPath .githooks
 
 clean:
 	rm -f gotrpc coverage.out
