@@ -72,3 +72,54 @@ func TestServerDefaultConfig(t *testing.T) {
 		t.Errorf("expected default addr ':8080', got %q", srv.Addr())
 	}
 }
+
+func TestServerCustomBasePath(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "ping", func(ctx context.Context, input struct{}) (string, error) {
+		return "pong", nil
+	})
+
+	srv := nethttp.NewServer(r, nethttp.Config{
+		Addr:     "127.0.0.1:18924",
+		BasePath: "/api/v1",
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Start()
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	// Should work with custom base path
+	resp, err := http.Get("http://127.0.0.1:18924/api/v1/ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 with custom basePath, got %d: %s", resp.StatusCode, body)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "pong") {
+		t.Errorf("expected 'pong' in response, got: %s", body)
+	}
+
+	// Should NOT work with default /trpc path
+	resp2, err := http.Get("http://127.0.0.1:18924/trpc/ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+
+	if resp2.StatusCode == http.StatusOK {
+		t.Error("expected non-200 for wrong basePath /trpc, but got 200")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
+	<-errCh
+}

@@ -210,6 +210,16 @@ func TestMutationWithSuperJSON(t *testing.T) {
 	}
 }
 
+func TestSuperJSONTransformOutput_MarshalError(t *testing.T) {
+	tr := router.SuperJSONTransformer{}
+
+	// Channels cannot be marshaled to JSON
+	_, err := tr.TransformOutput(make(chan int))
+	if err == nil {
+		t.Fatal("expected marshal error for channel type")
+	}
+}
+
 func TestBatchWithSuperJSON(t *testing.T) {
 	r := router.NewRouter(router.WithTransformer(router.SuperJSONTransformer{}))
 

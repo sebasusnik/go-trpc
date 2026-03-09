@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sebasusnik/go-trpc/pkg/errors"
 	"github.com/sebasusnik/go-trpc/pkg/router"
 )
 
@@ -231,6 +232,117 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	if limited == 0 {
 		t.Error("expected some requests to be rate limited")
+	}
+}
+
+func TestLoggingMiddlewareErrorPath(t *testing.T) {
+	var logged []string
+	logger := router.LoggerFunc(func(msg string, args ...any) {
+		logged = append(logged, fmt.Sprintf(msg, args...))
+	})
+
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.LoggingMiddleware(logger))
+	router.Query(r, "fail", func(ctx context.Context, input struct{}) (string, error) {
+		return "", fmt.Errorf("something went wrong")
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/fail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	found := false
+	for _, entry := range logged {
+		if strings.Contains(entry, "fail") && strings.Contains(entry, "failed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error log entry with 'fail' and 'failed', got: %v", logged)
+	}
+}
+
+func TestBearerAuthValidatorReturnsTRPCError(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.BearerAuth(func(ctx context.Context, token string) (context.Context, error) {
+		return ctx, errors.New(errors.ErrForbidden, "custom forbidden")
+	}))
+	router.Query(r, "me", func(ctx context.Context, input struct{}) (string, error) {
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+"/trpc/me", nil)
+	req.Header.Set("Authorization", "Bearer some-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Should return 403 (Forbidden), not 401 (Unauthorized)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 for TRPCError from BearerAuth validator, got %d", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "custom forbidden") {
+		t.Errorf("expected 'custom forbidden' in response, got: %s", body)
+	}
+}
+
+func TestAPIKeyAuthValidatorReturnsTRPCError(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.APIKeyAuth("X-API-Key", func(ctx context.Context, key string) (context.Context, error) {
+		return ctx, errors.New(errors.ErrForbidden, "key forbidden")
+	}))
+	router.Query(r, "data", func(ctx context.Context, input struct{}) (string, error) {
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+"/trpc/data", nil)
+	req.Header.Set("X-API-Key", "some-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 for TRPCError from APIKeyAuth validator, got %d", resp.StatusCode)
+	}
+}
+
+func TestRateLimitUnderLimit(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.RateLimit(100)) // high limit
+	router.Query(r, "ok", func(ctx context.Context, input struct{}) (string, error) {
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// 5 requests should all succeed under a 100/s limit
+	for i := 0; i < 5; i++ {
+		resp, err := http.Get(srv.URL + "/trpc/ok")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("request %d: expected 200, got %d", i, resp.StatusCode)
+		}
+		resp.Body.Close()
 	}
 }
 

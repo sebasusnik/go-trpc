@@ -62,6 +62,7 @@ func (r *Router) handleSubscription(w http.ResponseWriter, req *http.Request, pa
 
 	ctx := withRequest(req.Context(), req)
 	ctx = withResponseWriter(ctx, w)
+	ctx = withProcedureName(ctx, path)
 
 	// Call subscription handler
 	ch, err := r.callSubscription(ctx, proc, inputJSON, path)
@@ -123,6 +124,9 @@ func (r *Router) handleSubscription(w http.ResponseWriter, req *http.Request, pa
 }
 
 // callSubscription invokes the subscription handler with panic recovery and middleware.
+// Middlewares are applied as a "gate" before the subscription handler runs — they can
+// reject the request (e.g. BearerAuth, RateLimit) but the actual subscription result
+// is the channel returned by the SubscriptionHandler.
 func (r *Router) callSubscription(ctx context.Context, proc *procedure, inputJSON []byte, name string) (ch <-chan interface{}, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -132,7 +136,24 @@ func (r *Router) callSubscription(ctx context.Context, proc *procedure, inputJSO
 		}
 	}()
 
-	handler := proc.SubscriptionHandler
+	// Apply middlewares by wrapping a sentinel handler that captures the context
+	// after all middlewares have run. If any middleware returns an error (auth, rate limit),
+	// we get that error back and never invoke the subscription handler.
+	if len(r.middlewares) > 0 {
+		var middlewareCtx context.Context
+		gate := func(ctx context.Context, req Request) (interface{}, error) {
+			middlewareCtx = ctx
+			return nil, nil
+		}
+		gated := applyMiddlewares(gate, r.middlewares)
+		if _, err := gated(ctx, Request{Input: inputJSON}); err != nil {
+			return nil, err
+		}
+		// Use the context enriched by middlewares (e.g. RequestID added to context)
+		if middlewareCtx != nil {
+			ctx = middlewareCtx
+		}
+	}
 
-	return handler(ctx, Request{Input: inputJSON})
+	return proc.SubscriptionHandler(ctx, Request{Input: inputJSON})
 }

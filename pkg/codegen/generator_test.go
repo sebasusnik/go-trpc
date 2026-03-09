@@ -3,6 +3,8 @@ package codegen
 import (
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -279,6 +281,152 @@ func TestGenerateTS(t *testing.T) {
 	}
 	if !strings.Contains(output, "export type ProcedureName = keyof typeof procedures") {
 		t.Error("expected ProcedureName type export")
+	}
+}
+
+func TestParseDirSimple(t *testing.T) {
+	result, err := ParseDir("testdata/simple")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Procedures) != 2 {
+		t.Fatalf("expected 2 procedures, got %d: %+v", len(result.Procedures), result.Procedures)
+	}
+
+	names := make(map[string]string)
+	for _, p := range result.Procedures {
+		names[p.Name] = p.Type
+	}
+
+	if names["ping"] != "query" {
+		t.Errorf("expected ping=query, got %v", names["ping"])
+	}
+	if names["createItem"] != "mutation" {
+		t.Errorf("expected createItem=mutation, got %v", names["createItem"])
+	}
+}
+
+func TestParseDirWithEnums(t *testing.T) {
+	result, err := ParseDir("testdata/with_enums")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Procedures) != 1 {
+		t.Fatalf("expected 1 procedure, got %d", len(result.Procedures))
+	}
+	if result.Procedures[0].Name != "getStatus" {
+		t.Errorf("expected getStatus, got %s", result.Procedures[0].Name)
+	}
+
+	if len(result.Enums) != 1 {
+		t.Fatalf("expected 1 enum, got %d", len(result.Enums))
+	}
+	if result.Enums[0].TypeName != "Status" {
+		t.Errorf("expected Status enum, got %s", result.Enums[0].TypeName)
+	}
+}
+
+func TestParseDirNested(t *testing.T) {
+	result, err := ParseDir("testdata/nested")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Procedures) != 1 {
+		t.Fatalf("expected 1 procedure, got %d", len(result.Procedures))
+	}
+	// After prefix resolution, should be "admin.listUsers"
+	if result.Procedures[0].Name != "admin.listUsers" {
+		t.Errorf("expected 'admin.listUsers', got %q", result.Procedures[0].Name)
+	}
+}
+
+func TestParseDirNonexistent(t *testing.T) {
+	_, err := ParseDir("testdata/nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent directory")
+	}
+}
+
+func TestGenerate_DTS(t *testing.T) {
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "out", "router.d.ts")
+
+	err := Generate(GenerateOptions{
+		SourcePath: "testdata/simple",
+		OutputPath: outPath,
+		Format:     "dts",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output := string(content)
+	if !strings.Contains(output, "DO NOT EDIT") {
+		t.Error("expected header comment")
+	}
+	if !strings.Contains(output, "ping:") {
+		t.Error("expected ping procedure")
+	}
+	if !strings.Contains(output, "createItem:") {
+		t.Error("expected createItem procedure")
+	}
+	if !strings.Contains(output, "AppRouter") {
+		t.Error("expected AppRouter type")
+	}
+}
+
+func TestGenerate_TS(t *testing.T) {
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "client.ts")
+
+	err := Generate(GenerateOptions{
+		SourcePath: "testdata/simple",
+		OutputPath: outPath,
+		Format:     "ts",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output := string(content)
+	if !strings.Contains(output, "procedures") {
+		t.Error("expected procedures const")
+	}
+	if !strings.Contains(output, `"ping"`) {
+		t.Error("expected ping in TS output")
+	}
+}
+
+func TestGenerate_NoProcedures(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create an empty Go file with no procedures
+	emptyDir := filepath.Join(tmpDir, "empty")
+	os.MkdirAll(emptyDir, 0o755)
+	os.WriteFile(filepath.Join(emptyDir, "main.go"), []byte("package empty\n"), 0o644)
+
+	err := Generate(GenerateOptions{
+		SourcePath: emptyDir,
+		OutputPath: filepath.Join(tmpDir, "out.d.ts"),
+	})
+	if err == nil {
+		t.Fatal("expected error for no procedures")
+	}
+	if !strings.Contains(err.Error(), "no tRPC procedures found") {
+		t.Errorf("expected 'no tRPC procedures found' error, got: %v", err)
 	}
 }
 

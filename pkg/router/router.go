@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	trpcerrors "github.com/sebasusnik/go-trpc/pkg/errors"
 )
@@ -20,6 +21,7 @@ type Router struct {
 	corsConfig  *CORSConfig
 	transformer Transformer
 	logger      Logger
+	basePath    string // URL prefix, e.g. "/trpc" (default)
 }
 
 // Option configures a Router.
@@ -42,6 +44,19 @@ func WithLogger(l Logger) Option {
 	}
 }
 
+// WithBasePath sets the URL prefix for the router (default: "/trpc").
+// The router will strip this prefix from incoming request paths.
+func WithBasePath(path string) Option {
+	return func(r *Router) {
+		// Ensure it starts with / and doesn't end with /
+		if path != "" && path[0] != '/' {
+			path = "/" + path
+		}
+		path = strings.TrimRight(path, "/")
+		r.basePath = path
+	}
+}
+
 // CORSConfig holds CORS configuration.
 type CORSConfig struct {
 	AllowedOrigins []string
@@ -55,6 +70,7 @@ func NewRouter(opts ...Option) *Router {
 	r := &Router{
 		procedures: make(map[string]*procedure),
 		logger:     defaultLogger{},
+		basePath:   "/trpc",
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -195,12 +211,18 @@ func Subscription[I any, O any](r *Router, name string, handler func(ctx context
 			if err != nil {
 				return nil, err
 			}
-			// Bridge typed chan O to chan interface{}
+			// Bridge typed chan O to chan interface{}.
+			// Use select on ctx.Done() to prevent goroutine leaks when
+			// the SSE consumer disconnects but the producer keeps emitting.
 			out := make(chan interface{})
 			go func() {
 				defer close(out)
 				for v := range ch {
-					out <- v
+					select {
+					case out <- v:
+					case <-ctx.Done():
+						return
+					}
 				}
 			}()
 			return out, nil

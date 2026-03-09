@@ -15,8 +15,12 @@ const (
 	ErrTimeout         = -32008
 	ErrConflict        = -32009
 	ErrTooManyRequests = -32029
-	ErrBadRequest      = -32600
 )
+
+// ErrBadRequest is an alias for ErrInvalidRequest.
+// Both map to tRPC code -32600. Use ErrBadRequest for application-level
+// validation errors; ErrInvalidRequest for protocol-level errors.
+const ErrBadRequest = ErrInvalidRequest
 
 // codeNames maps error codes to their string representation.
 var codeNames = map[int]string{

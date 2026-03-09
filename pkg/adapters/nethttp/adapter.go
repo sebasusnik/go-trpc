@@ -54,6 +54,9 @@ type Server struct {
 func NewServer(r *router.Router, cfg Config) *Server {
 	cfg.defaults()
 
+	// Apply BasePath to the router so it strips the correct prefix.
+	router.WithBasePath(cfg.BasePath)(r)
+
 	mux := http.NewServeMux()
 	mux.Handle("/", r.Handler())
 

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -47,7 +46,10 @@ func (r *Router) handleBatchStream(w http.ResponseWriter, req *http.Request, nam
 			if req.Method == http.MethodPost {
 				procType = ProcedureMutation
 			}
-			result := r.callProcedure(w, req, procName, procType, inputJSON)
+			// Pass nil writer: headers are already sent (WriteHeader called above),
+			// so SetHeader from procedures is a no-op. This avoids a race on the
+			// shared http.ResponseWriter between concurrent goroutines.
+			result := r.callProcedure(nil, req, procName, procType, inputJSON)
 			resultCh <- indexedResult{Index: idx, Result: result}
 		}(i, name)
 	}
@@ -68,7 +70,7 @@ func (r *Router) handleBatchStream(w http.ResponseWriter, req *http.Request, nam
 		if !first {
 			fmt.Fprint(w, ",")
 		}
-		fmt.Fprintf(w, "%q:%s", strconv.Itoa(ir.Index), resultBytes)
+		fmt.Fprintf(w, "\"%d\":%s", ir.Index, resultBytes)
 		flusher.Flush()
 		first = false
 	}

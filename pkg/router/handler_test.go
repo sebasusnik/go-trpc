@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sebasusnik/go-trpc/pkg/errors"
 	"github.com/sebasusnik/go-trpc/pkg/router"
@@ -1436,5 +1437,705 @@ func TestQueryContextCancellation(t *testing.T) {
 	// or the server returned an error response. Both are acceptable.
 	if err == nil && resp.StatusCode == http.StatusOK {
 		t.Error("expected request to be cancelled, but got 200 OK")
+	}
+}
+
+// --- Bug fix tests ---
+
+func TestMiddlewaresApplyToSubscriptions(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+
+	// Register a middleware that rejects all requests (simulating auth)
+	r.Use(func(next router.Handler) router.Handler {
+		return func(ctx context.Context, req router.Request) (interface{}, error) {
+			return nil, errors.New(errors.ErrUnauthorized, "not authenticated")
+		}
+	})
+
+	router.Subscription(r, "events",
+		func(ctx context.Context, input struct{}) (<-chan string, error) {
+			ch := make(chan string, 1)
+			ch <- "should not reach here"
+			close(ch)
+			return ch, nil
+		},
+	)
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	// Should get an unauthorized error, NOT an SSE stream
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("expected JSON error response, got: %s", string(body))
+	}
+	errField, ok := result["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected error field in response, got: %s", string(body))
+	}
+	if code, _ := errField["code"].(float64); int(code) != errors.ErrUnauthorized {
+		t.Errorf("expected error code %d, got %v", errors.ErrUnauthorized, errField["code"])
+	}
+}
+
+func TestMiddlewaresEnrichSubscriptionContext(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+
+	type ctxKey string
+	var captured string
+
+	// Middleware that enriches context
+	r.Use(func(next router.Handler) router.Handler {
+		return func(ctx context.Context, req router.Request) (interface{}, error) {
+			ctx = context.WithValue(ctx, ctxKey("user"), "alice")
+			return next(ctx, req)
+		}
+	})
+
+	router.Subscription(r, "events",
+		func(ctx context.Context, input struct{}) (<-chan string, error) {
+			captured = ctx.Value(ctxKey("user")).(string)
+			ch := make(chan string)
+			close(ch)
+			return ch, nil
+		},
+	)
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if captured != "alice" {
+		t.Errorf("expected middleware to enrich context with user=alice, got %q", captured)
+	}
+}
+
+func TestBatchStreamNoRace(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+
+	router.Query(r, "a",
+		func(ctx context.Context, input struct{}) (string, error) {
+			// Attempt SetHeader — should be a no-op in batch stream mode (nil writer)
+			router.SetHeader(ctx, "X-Custom", "value")
+			return "result-a", nil
+		},
+	)
+	router.Query(r, "b",
+		func(ctx context.Context, input struct{}) (string, error) {
+			router.SetHeader(ctx, "X-Custom", "value")
+			return "result-b", nil
+		},
+	)
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Run multiple times to increase chance of detecting races
+	// (use -race flag for definitive detection)
+	for i := 0; i < 20; i++ {
+		req, _ := http.NewRequest("GET", srv.URL+"/trpc/a,b?batch=1", nil)
+		req.Header.Set("trpc-batch-mode", "stream")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(body, &result); err != nil {
+			t.Fatalf("failed to parse batch stream response: %s", string(body))
+		}
+		if len(result) != 2 {
+			t.Errorf("expected 2 results, got %d: %s", len(result), string(body))
+		}
+	}
+}
+
+func TestCustomBasePath(t *testing.T) {
+	r := router.NewRouter(
+		router.WithBasePath("/api/rpc"),
+		router.WithLogger(router.NopLogger),
+	)
+
+	router.Query(r, "ping",
+		func(ctx context.Context, input struct{}) (string, error) {
+			return "pong", nil
+		},
+	)
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Should work with custom base path
+	resp, err := http.Get(srv.URL + "/api/rpc/ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 with custom basePath, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	resultField, _ := result["result"].(map[string]interface{})
+	if data, _ := resultField["data"].(string); data != "pong" {
+		t.Errorf("expected pong, got %v", data)
+	}
+
+	// Should NOT work with default /trpc path
+	resp2, err := http.Get(srv.URL + "/trpc/ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for wrong basePath, got %d", resp2.StatusCode)
+	}
+}
+
+func TestBasePathNormalization(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantPath string
+	}{
+		{"api", "/api/ping"},
+		{"/api/", "/api/ping"},
+		{"/v1/trpc/", "/v1/trpc/ping"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			r := router.NewRouter(
+				router.WithBasePath(tt.input),
+				router.WithLogger(router.NopLogger),
+			)
+			router.Query(r, "ping",
+				func(ctx context.Context, input struct{}) (string, error) {
+					return "pong", nil
+				},
+			)
+
+			srv := httptest.NewServer(r.Handler())
+			defer srv.Close()
+
+			resp, err := http.Get(srv.URL + tt.wantPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("basePath %q: expected 200 at %s, got %d", tt.input, tt.wantPath, resp.StatusCode)
+			}
+		})
+	}
+}
+
+// --- Bug fix verification tests ---
+
+func TestSubscriptionGoroutineNoLeak(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+
+	// Subscription that keeps emitting until context is cancelled
+	router.Subscription(r, "infinite", func(ctx context.Context, input struct{}) (<-chan int, error) {
+		ch := make(chan int)
+		go func() {
+			defer close(ch)
+			i := 0
+			for {
+				select {
+				case ch <- i:
+					i++
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Connect and read a few events, then disconnect
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/trpc/infinite", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		// Context cancellation may cause error — that's expected
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("expected SSE stream, got %s", resp.Header.Get("Content-Type"))
+	}
+
+	// Read until context expires
+	io.ReadAll(resp.Body)
+	// If the goroutine bridge leaks, this test will hang or the goroutine count will increase.
+	// With -race flag, a leak would be detected as a stuck goroutine.
+}
+
+func TestSubscriptionProcedureNameInHandler(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+
+	var capturedName string
+	router.Subscription(r, "myStream", func(ctx context.Context, input struct{}) (<-chan string, error) {
+		capturedName = router.GetProcedureName(ctx)
+		ch := make(chan string)
+		close(ch)
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/myStream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if capturedName != "myStream" {
+		t.Errorf("expected procedure name 'myStream' in subscription handler, got %q", capturedName)
+	}
+}
+
+func TestSubscriptionProcedureNameInMiddleware(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+
+	var capturedName string
+	r.Use(func(next router.Handler) router.Handler {
+		return func(ctx context.Context, req router.Request) (interface{}, error) {
+			capturedName = router.GetProcedureName(ctx)
+			return next(ctx, req)
+		}
+	})
+
+	router.Subscription(r, "namedSub", func(ctx context.Context, input struct{}) (<-chan string, error) {
+		ch := make(chan string)
+		close(ch)
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/namedSub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if capturedName != "namedSub" {
+		t.Errorf("expected procedure name 'namedSub' in middleware, got %q", capturedName)
+	}
+}
+
+// --- CORS edge case tests ---
+
+func TestCORSWildcardOrigin(t *testing.T) {
+	r := setupRouter()
+	r.WithCORS(router.CORSConfig{
+		AllowedOrigins: []string{"*"},
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("OPTIONS", srv.URL+"/trpc/getUser", nil)
+	req.Header.Set("Origin", "http://any-domain.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("Access-Control-Allow-Origin") != "http://any-domain.com" {
+		t.Errorf("expected wildcard to allow any origin, got %q", resp.Header.Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestCORSNonMatchingOrigin(t *testing.T) {
+	r := setupRouter()
+	r.WithCORS(router.CORSConfig{
+		AllowedOrigins: []string{"http://allowed.com"},
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("OPTIONS", srv.URL+"/trpc/getUser", nil)
+	req.Header.Set("Origin", "http://not-allowed.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Errorf("expected no CORS headers for non-matching origin, got %q", resp.Header.Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestCORSAllowedHeadersAndMaxAge(t *testing.T) {
+	r := setupRouter()
+	r.WithCORS(router.CORSConfig{
+		AllowedOrigins: []string{"http://localhost:3000"},
+		AllowedHeaders: []string{"Content-Type", "Authorization", "X-Custom"},
+		MaxAge:         3600,
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("OPTIONS", srv.URL+"/trpc/getUser", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	allowHeaders := resp.Header.Get("Access-Control-Allow-Headers")
+	if !strings.Contains(allowHeaders, "Authorization") || !strings.Contains(allowHeaders, "X-Custom") {
+		t.Errorf("expected allowed headers to include Authorization and X-Custom, got %q", allowHeaders)
+	}
+
+	maxAge := resp.Header.Get("Access-Control-Max-Age")
+	if maxAge != "3600" {
+		t.Errorf("expected Max-Age 3600, got %q", maxAge)
+	}
+}
+
+// --- Validator returning *TRPCError tests ---
+
+type TRPCValidatedInput struct {
+	Value string `json:"value"`
+}
+
+func (v *TRPCValidatedInput) Validate() error {
+	if v.Value == "trpc-error" {
+		return errors.New(errors.ErrForbidden, "forbidden by validator")
+	}
+	if v.Value == "" {
+		return fmt.Errorf("value is required")
+	}
+	return nil
+}
+
+func TestValidatorReturnsTRPCError(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "validated", func(ctx context.Context, input TRPCValidatedInput) (string, error) {
+		return input.Value, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + `/trpc/validated?input={"value":"trpc-error"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 for TRPCError from validator, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	errField := result["error"].(map[string]interface{})
+	data := errField["data"].(map[string]interface{})
+	if data["code"] != "FORBIDDEN" {
+		t.Errorf("expected FORBIDDEN code, got %v", data["code"])
+	}
+}
+
+func TestMutationValidatorReturnsTRPCError(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Mutation(r, "validated", func(ctx context.Context, input TRPCValidatedInput) (string, error) {
+		return input.Value, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/trpc/validated", "application/json", strings.NewReader(`{"value":"trpc-error"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 for TRPCError from mutation validator, got %d", resp.StatusCode)
+	}
+}
+
+// --- Context edge case tests ---
+
+func TestGetBearerTokenNonBearerScheme(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "token", func(ctx context.Context, input struct{}) (string, error) {
+		return router.GetBearerToken(ctx), nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+"/trpc/token", nil)
+	req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	data := result["result"].(map[string]interface{})["data"]
+	if data != "" {
+		t.Errorf("expected empty string for Basic auth scheme, got %v", data)
+	}
+}
+
+func TestGetClientIPRemoteAddrFallback(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "ip", func(ctx context.Context, input struct{}) (string, error) {
+		return router.GetClientIP(ctx), nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// No X-Forwarded-For or X-Real-IP — should use RemoteAddr
+	resp, err := http.Get(srv.URL + "/trpc/ip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	data := result["result"].(map[string]interface{})["data"].(string)
+	if data == "" {
+		t.Error("expected non-empty client IP from RemoteAddr fallback")
+	}
+	// Should be the loopback IP (127.0.0.1 or ::1)
+	if !strings.Contains(data, "127.0.0.1") && !strings.Contains(data, "::1") {
+		t.Errorf("expected loopback IP, got %q", data)
+	}
+}
+
+// --- Subscription input validation ---
+
+func TestSubscriptionInputValidation(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Subscription(r, "validated", func(ctx context.Context, input ValidatedInput) (<-chan string, error) {
+		ch := make(chan string)
+		close(ch)
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Empty name should fail validation
+	resp, err := http.Get(srv.URL + `/trpc/validated?input={"name":""}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for subscription validation failure, got %d", resp.StatusCode)
+	}
+}
+
+func TestSubscriptionInputMalformedJSON(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Subscription(r, "sub", func(ctx context.Context, input ValidatedInput) (<-chan string, error) {
+		ch := make(chan string)
+		close(ch)
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + `/trpc/sub?input={bad-json}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed JSON subscription input, got %d", resp.StatusCode)
+	}
+}
+
+// --- Stream edge cases ---
+
+func TestStreamBatchSingleItem(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "ping", func(ctx context.Context, input struct{}) (string, error) {
+		return "pong", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+`/trpc/ping?batch=1&input={"0":{}}`, nil)
+	req.Header.Set("trpc-batch-mode", "stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode single-item batch stream: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result))
+	}
+	if _, ok := result["0"]; !ok {
+		t.Error("expected result at key '0'")
+	}
+}
+
+func TestStreamBatchEmpty(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "ping", func(ctx context.Context, input struct{}) (string, error) {
+		return "pong", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Empty batch — no procedure names
+	req, _ := http.NewRequest("GET", srv.URL+`/trpc/?batch=1`, nil)
+	req.Header.Set("trpc-batch-mode", "stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	// Should produce {} or error gracefully
+	content := strings.TrimSpace(string(body))
+	if content != "{}" && resp.StatusCode != http.StatusNotFound {
+		// Either empty JSON or 404 is acceptable
+		t.Logf("empty batch produced: status=%d body=%q", resp.StatusCode, content)
+	}
+}
+
+func TestBatchAllErrorReturns500(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "fail1", func(ctx context.Context, input struct{}) (string, error) {
+		return "", fmt.Errorf("error 1")
+	})
+	router.Query(r, "fail2", func(ctx context.Context, input struct{}) (string, error) {
+		return "", fmt.Errorf("error 2")
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/fail1,fail2?batch=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("expected 500 when all batch entries error, got %d", resp.StatusCode)
+	}
+
+	var results []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&results)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	for i, res := range results {
+		if res["error"] == nil {
+			t.Errorf("result %d: expected error", i)
+		}
+	}
+}
+
+func TestSubscriptionMiddlewareRejection(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.BearerAuth(func(ctx context.Context, token string) (context.Context, error) {
+		return ctx, fmt.Errorf("denied")
+	}))
+	router.Subscription(r, "events", func(ctx context.Context, input struct{}) (<-chan string, error) {
+		ch := make(chan string)
+		close(ch)
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// No auth header → middleware should reject before subscription starts
+	resp, err := http.Get(srv.URL + "/trpc/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		body, _ := io.ReadAll(resp.Body)
+		t.Errorf("expected 401 from middleware rejection, got %d: %s", resp.StatusCode, body)
+	}
+}
+
+func TestSubscriptionWithTransformerInputError(t *testing.T) {
+	r := router.NewRouter(
+		router.WithLogger(router.NopLogger),
+		router.WithTransformer(router.SuperJSONTransformer{}),
+	)
+	router.Subscription(r, "stream", func(ctx context.Context, input struct{}) (<-chan string, error) {
+		ch := make(chan string)
+		close(ch)
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Send malformed superjson envelope — transformer should fail
+	resp, err := http.Get(srv.URL + `/trpc/stream?input={"json":INVALID}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		t.Errorf("expected 400 from transformer error, got %d: %s", resp.StatusCode, body)
 	}
 }
