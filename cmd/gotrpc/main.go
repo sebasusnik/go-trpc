@@ -109,7 +109,7 @@ func watchAndRegenerate(sourcePath string, opts codegen.GenerateOptions) error {
 	if err != nil {
 		return fmt.Errorf("failed to create watcher: %w", err)
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	// Recursively add all directories under sourcePath
 	err = filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {

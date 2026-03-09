@@ -126,7 +126,7 @@ func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path s
 		return
 	}
 
-	defer req.Body.Close()
+	defer func() { _ = req.Body.Close() }()
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		r.writeErrorResponse(w, trpcerrors.ErrParseError, "failed to read body", http.StatusBadRequest, path)
@@ -179,42 +179,6 @@ func (r *Router) handleMutation(w http.ResponseWriter, req *http.Request, path s
 	result := r.callProcedure(w, req, path, ProcedureMutation, inputJSON)
 	r.logger.Debug("mutation %s result=%+v", path, result)
 	r.writeResult(w, result)
-}
-
-func (r *Router) handleBatch(w http.ResponseWriter, req *http.Request, names []string, getInput func(i int) []byte) {
-	results := make([]trpcResult, len(names))
-	for i, name := range names {
-		name = strings.TrimSpace(name)
-		inputJSON := getInput(i)
-
-		// Determine procedure type from registration
-		procType := ProcedureQuery
-		if req.Method == http.MethodPost {
-			procType = ProcedureMutation
-		}
-		results[i] = r.callProcedure(w, req, name, procType, inputJSON)
-	}
-
-	// Use 207 Multi-Status when batch contains mixed success/error results
-	hasError := false
-	hasSuccess := false
-	for _, res := range results {
-		if res.Error != nil {
-			hasError = true
-		} else {
-			hasSuccess = true
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if hasError && !hasSuccess {
-		w.WriteHeader(http.StatusInternalServerError)
-	} else if hasError && hasSuccess {
-		w.WriteHeader(http.StatusMultiStatus)
-	}
-	if err := json.NewEncoder(w).Encode(results); err != nil {
-		r.logger.Error("failed to encode batch response: %v", err)
-	}
 }
 
 func (r *Router) callProcedure(w http.ResponseWriter, req *http.Request, name string, expectedType ProcedureType, inputJSON []byte) (result trpcResult) {
@@ -326,41 +290,3 @@ func (r *Router) writeResult(w http.ResponseWriter, result trpcResult) {
 	}
 }
 
-func (r *Router) writeCORSHeaders(w http.ResponseWriter, req *http.Request) {
-	if r.corsConfig == nil {
-		return
-	}
-
-	origin := req.Header.Get("Origin")
-	if origin == "" {
-		return
-	}
-
-	allowed := false
-	for _, o := range r.corsConfig.AllowedOrigins {
-		if o == "*" || o == origin {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
-		return
-	}
-
-	w.Header().Set("Access-Control-Allow-Origin", origin)
-	w.Header().Set("Vary", "Origin")
-
-	if len(r.corsConfig.AllowedMethods) > 0 {
-		w.Header().Set("Access-Control-Allow-Methods", strings.Join(r.corsConfig.AllowedMethods, ", "))
-	} else {
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	}
-
-	if len(r.corsConfig.AllowedHeaders) > 0 {
-		w.Header().Set("Access-Control-Allow-Headers", strings.Join(r.corsConfig.AllowedHeaders, ", "))
-	}
-
-	if r.corsConfig.MaxAge > 0 {
-		w.Header().Set("Access-Control-Max-Age", strconv.Itoa(r.corsConfig.MaxAge))
-	}
-}
