@@ -53,8 +53,11 @@ Generate TypeScript types from your Go code:
 ```bash
 gotrpc generate ./api --output ./web/src/generated/router.d.ts
 
+# Watch for changes and regenerate automatically
+gotrpc generate --watch
+
 # Preview without writing to disk (useful for CI)
-gotrpc generate ./api --output ./web/src/generated/router.d.ts --dry-run
+gotrpc generate --dry-run
 ```
 
 Call it from the frontend with full type-safety:
