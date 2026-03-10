@@ -1,4 +1,4 @@
-import { ChevronLeft, Send } from "lucide-react";
+import { ChevronLeft, PanelLeftOpen, Send } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { emitLog, GoTRPCError, nextLogId, trpc } from "../trpc";
 import ChatMessage from "./ChatMessage";
@@ -16,6 +16,7 @@ type Props = {
   roomName: string;
   username: string;
   onBack?: () => void;
+  onExpandSidebar?: () => void;
 };
 
 export default function ChatRoom({
@@ -23,6 +24,7 @@ export default function ChatRoom({
   roomName,
   username,
   onBack,
+  onExpandSidebar,
 }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -125,7 +127,7 @@ export default function ChatRoom({
   return (
     <div className="flex h-full flex-col">
       {/* Room header */}
-      <div className="flex items-center gap-2 border-b border-zinc-200/80 px-4 py-2.5">
+      <div className="flex h-10 items-center gap-2 border-b border-zinc-200/80 px-4">
         {onBack && (
           <button
             type="button"
@@ -136,7 +138,20 @@ export default function ChatRoom({
             <ChevronLeft size={16} />
           </button>
         )}
+        {onExpandSidebar && (
+          <button
+            type="button"
+            onClick={onExpandSidebar}
+            className="hidden md:flex items-center justify-center h-5 w-5 rounded text-zinc-300 hover:text-zinc-500 transition-colors cursor-pointer"
+            aria-label="Show channels"
+          >
+            <PanelLeftOpen size={14} />
+          </button>
+        )}
         <h3 className="text-sm font-medium text-zinc-700">#{roomName}</h3>
+        <span className="ml-auto rounded bg-go-blue/10 px-2 py-0.5 text-[11px] text-go-blue font-medium mono">
+          {username}
+        </span>
       </div>
 
       {/* Messages */}

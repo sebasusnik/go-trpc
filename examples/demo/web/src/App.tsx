@@ -1,4 +1,3 @@
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ChatRoom from "./components/ChatRoom";
 import CodePanel from "./components/CodePanel";
@@ -73,28 +72,10 @@ export default function App() {
       <header className="border-b border-zinc-200/80 bg-white/80 backdrop-blur-sm px-4 py-2.5 md:px-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 md:gap-3">
-            <button
-              type="button"
-              onClick={() => setSidebarCollapsed((c) => !c)}
-              className="hidden md:flex items-center justify-center h-7 w-7 rounded-md text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 transition-colors cursor-pointer"
-              aria-label={sidebarCollapsed ? "Show channels" : "Hide channels"}
-            >
-              {sidebarCollapsed ? (
-                <PanelLeftOpen size={16} />
-              ) : (
-                <PanelLeftClose size={16} />
-              )}
-            </button>
             <h1 className="text-sm font-semibold tracking-tight">
               <span className="text-go-blue">go-trpc</span>{" "}
               <span className="text-zinc-400 font-normal">demo</span>
             </h1>
-            <span className="hidden sm:inline rounded bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500 font-medium">
-              Chat Rooms
-            </span>
-            <span className="hidden sm:inline rounded bg-go-blue/10 px-2 py-0.5 text-[11px] text-go-blue font-medium mono">
-              {username}
-            </span>
           </div>
           <div className="flex items-center gap-3 md:gap-4 text-xs">
             {/* Mobile view toggle */}
@@ -150,14 +131,17 @@ export default function App() {
         >
           {/* Room sidebar — hidden on mobile when a room is active, collapsible on desktop */}
           <div
-            className={`w-full md:w-56 shrink-0 border-r border-zinc-200/80 bg-white transition-all duration-200 ${
-              activeRoom ? "hidden md:block" : ""
-            } ${sidebarCollapsed ? "md:hidden" : ""}`}
+            className={`shrink-0 border-r border-zinc-200/80 bg-white transition-[width] duration-200 overflow-hidden ${
+              activeRoom ? "hidden md:block" : "w-full md:w-56"
+            } ${sidebarCollapsed ? "md:w-0 md:border-r-0" : "md:w-56"}`}
           >
-            <RoomList
-              activeRoomId={activeRoom?.id ?? null}
-              onSelectRoom={setActiveRoom}
-            />
+            <div className="w-56 h-full">
+              <RoomList
+                activeRoomId={activeRoom?.id ?? null}
+                onSelectRoom={setActiveRoom}
+                onCollapse={() => setSidebarCollapsed(true)}
+              />
+            </div>
           </div>
 
           {/* Chat area — hidden on mobile when no room is active */}
@@ -172,6 +156,11 @@ export default function App() {
                 roomName={activeRoom.name}
                 username={username}
                 onBack={() => setActiveRoom(null)}
+                onExpandSidebar={
+                  sidebarCollapsed
+                    ? () => setSidebarCollapsed(false)
+                    : undefined
+                }
               />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-zinc-300">
@@ -206,11 +195,11 @@ export default function App() {
             width: mobileView === "devtools" ? undefined : sidebarWidth,
           }}
         >
-          <div className="flex border-b border-zinc-200/80">
+          <div className="flex h-10 border-b border-zinc-200/80">
             <button
               type="button"
               onClick={() => setBottomPanel("log")}
-              className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
+              className={`flex-1 px-4 py-2.5 -mb-px text-xs font-medium transition-colors cursor-pointer ${
                 bottomPanel === "log"
                   ? "border-b-2 border-zinc-900 text-zinc-900"
                   : "text-zinc-400 hover:text-zinc-600"
@@ -221,7 +210,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setBottomPanel("code")}
-              className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
+              className={`flex-1 px-4 py-2.5 -mb-px text-xs font-medium transition-colors cursor-pointer ${
                 bottomPanel === "code"
                   ? "border-b-2 border-zinc-900 text-zinc-900"
                   : "text-zinc-400 hover:text-zinc-600"
@@ -232,7 +221,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setBottomPanel("playground")}
-              className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
+              className={`flex-1 px-4 py-2.5 -mb-px text-xs font-medium transition-colors cursor-pointer ${
                 bottomPanel === "playground"
                   ? "border-b-2 border-zinc-900 text-zinc-900"
                   : "text-zinc-400 hover:text-zinc-600"

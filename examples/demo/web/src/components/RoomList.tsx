@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { PanelLeftClose, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GoTRPCError, trpc } from "../trpc";
 
@@ -11,9 +11,14 @@ type Room = {
 type Props = {
   activeRoomId: string | null;
   onSelectRoom: (room: Room) => void;
+  onCollapse?: () => void;
 };
 
-export default function RoomList({ activeRoomId, onSelectRoom }: Props) {
+export default function RoomList({
+  activeRoomId,
+  onSelectRoom,
+  onCollapse,
+}: Props) {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [newRoomName, setNewRoomName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -57,10 +62,20 @@ export default function RoomList({ activeRoomId, onSelectRoom }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="px-3 py-3 border-b border-zinc-200/80">
+      <div className="flex h-10 items-center justify-between px-3 border-b border-zinc-200/80">
         <h2 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-widest">
           Rooms
         </h2>
+        {onCollapse && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="hidden md:flex items-center justify-center h-5 w-5 rounded text-zinc-300 hover:text-zinc-500 transition-colors cursor-pointer"
+            aria-label="Hide channels"
+          >
+            <PanelLeftClose size={14} />
+          </button>
+        )}
       </div>
 
       {/* Room list */}
