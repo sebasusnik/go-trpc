@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/sebasusnik/go-trpc/pkg/errors"
 	"github.com/sebasusnik/go-trpc/pkg/router"
@@ -343,6 +345,181 @@ func TestRateLimitUnderLimit(t *testing.T) {
 			t.Errorf("request %d: expected 200, got %d", i, resp.StatusCode)
 		}
 		resp.Body.Close()
+	}
+}
+
+func TestMaxConnectionsPerIP_UnderLimit(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.MaxConnectionsPerIP(5))
+	router.Query(r, "ping", func(ctx context.Context, input struct{}) (string, error) {
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Sequential requests should all succeed
+	for i := 0; i < 5; i++ {
+		resp, err := http.Get(srv.URL + "/trpc/ping")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("request %d: expected 200, got %d", i, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+}
+
+func TestMaxConnectionsPerIP_ExceedsLimit(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.MaxConnectionsPerIP(2))
+
+	// Handler that blocks until we signal it to proceed
+	proceed := make(chan struct{})
+	router.Query(r, "slow", func(ctx context.Context, input struct{}) (string, error) {
+		<-proceed
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Launch 2 concurrent requests that will block
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := http.Get(srv.URL + "/trpc/slow")
+			if err != nil {
+				return
+			}
+			resp.Body.Close()
+		}()
+	}
+
+	// Give time for the 2 requests to reach the handler
+	time.Sleep(50 * time.Millisecond)
+
+	// 3rd request should be rejected
+	resp, err := http.Get(srv.URL + "/trpc/slow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("expected 429, got %d", resp.StatusCode)
+	}
+
+	// Unblock all and clean up
+	close(proceed)
+	wg.Wait()
+}
+
+func TestMaxConnectionsPerIP_FreesSlotAfterCompletion(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.MaxConnectionsPerIP(1))
+	router.Query(r, "ping", func(ctx context.Context, input struct{}) (string, error) {
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// First request succeeds and completes, freeing the slot
+	resp, err := http.Get(srv.URL + "/trpc/ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("first request: expected 200, got %d", resp.StatusCode)
+	}
+
+	// Second request should also succeed (slot was freed)
+	resp2, err := http.Get(srv.URL + "/trpc/ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("second request: expected 200, got %d", resp2.StatusCode)
+	}
+}
+
+func TestMaxInputSize_WithinLimit(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.MaxInputSize(1024))
+	router.Mutation(r, "create", func(ctx context.Context, input struct {
+		Name string `json:"name"`
+	}) (string, error) {
+		return input.Name, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	body := `{"name":"test"}`
+	resp, err := http.Post(srv.URL+"/trpc/create", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestMaxInputSize_ExceedsLimit(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.MaxInputSize(10))
+	router.Mutation(r, "create", func(ctx context.Context, input struct {
+		Name string `json:"name"`
+	}) (string, error) {
+		return input.Name, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	body := `{"name":"this is way too long for the limit"}`
+	resp, err := http.Post(srv.URL+"/trpc/create", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", resp.StatusCode)
+	}
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(respBody), "input too large") {
+		t.Errorf("expected 'input too large' in response, got: %s", respBody)
+	}
+}
+
+func TestMaxInputSize_EmptyInput(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.MaxInputSize(10))
+	router.Query(r, "ping", func(ctx context.Context, input struct{}) (string, error) {
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 for empty input, got %d", resp.StatusCode)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	trpcerrors "github.com/sebasusnik/go-trpc/pkg/errors"
@@ -101,6 +102,54 @@ func RateLimit(requestsPerSecond int) Middleware {
 		return func(ctx context.Context, req Request) (interface{}, error) {
 			if !limiter.Allow() {
 				return nil, trpcerrors.New(trpcerrors.ErrTooManyRequests, "rate limit exceeded")
+			}
+			return next(ctx, req)
+		}
+	}
+}
+
+// MaxConnectionsPerIP returns a middleware that limits the number of concurrent
+// requests from a single IP address. Useful for preventing a single client from
+// exhausting server resources, especially with long-lived SSE subscriptions.
+func MaxConnectionsPerIP(limit int) Middleware {
+	var mu sync.Mutex
+	counts := make(map[string]int)
+
+	return func(next Handler) Handler {
+		return func(ctx context.Context, req Request) (interface{}, error) {
+			ip := GetClientIP(ctx)
+
+			mu.Lock()
+			if counts[ip] >= limit {
+				mu.Unlock()
+				return nil, trpcerrors.New(trpcerrors.ErrTooManyRequests,
+					"too many concurrent connections from this IP")
+			}
+			counts[ip]++
+			mu.Unlock()
+
+			defer func() {
+				mu.Lock()
+				counts[ip]--
+				if counts[ip] == 0 {
+					delete(counts, ip)
+				}
+				mu.Unlock()
+			}()
+
+			return next(ctx, req)
+		}
+	}
+}
+
+// MaxInputSize returns a middleware that rejects requests whose input payload
+// exceeds the given byte limit. Useful for preventing oversized messages.
+func MaxInputSize(bytes int) Middleware {
+	return func(next Handler) Handler {
+		return func(ctx context.Context, req Request) (interface{}, error) {
+			if len(req.Input) > bytes {
+				return nil, trpcerrors.New(trpcerrors.ErrBadRequest,
+					fmt.Sprintf("input too large: %d bytes exceeds limit of %d", len(req.Input), bytes))
 			}
 			return next(ctx, req)
 		}
