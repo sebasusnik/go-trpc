@@ -19,11 +19,11 @@ export default function RequestLog() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-2.5">
-        <h3 className="text-sm font-semibold text-zinc-700">
+      <div className="flex items-center justify-between border-b border-zinc-200/80 px-4 py-2.5">
+        <h3 className="text-sm font-medium text-zinc-700">
           Request Log
           {logs.length > 0 && (
-            <span className="ml-1.5 text-xs font-normal text-zinc-400">
+            <span className="ml-1.5 text-[11px] font-normal text-zinc-300">
               ({logs.length})
             </span>
           )}
@@ -32,7 +32,7 @@ export default function RequestLog() {
           <button
             type="button"
             onClick={() => setLogs([])}
-            className="text-xs text-zinc-400 hover:text-zinc-600 cursor-pointer"
+            className="text-[11px] text-zinc-400 hover:text-zinc-600 cursor-pointer"
           >
             Clear
           </button>
@@ -40,7 +40,7 @@ export default function RequestLog() {
       </div>
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-2">
         {logs.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-xs text-zinc-400">
+          <div className="flex h-full items-center justify-center text-xs text-zinc-300">
             Interact with the task manager to see tRPC requests here
           </div>
         ) : (
@@ -50,7 +50,7 @@ export default function RequestLog() {
                 key={log.id}
                 role="button"
                 tabIndex={0}
-                className="log-entry cursor-pointer rounded-md border border-zinc-100 bg-white p-2.5 text-xs transition-colors hover:border-zinc-200"
+                className="log-entry cursor-pointer rounded-lg border border-zinc-100 bg-white p-3 text-xs transition-colors hover:border-zinc-200 hover:shadow-sm"
                 onClick={() =>
                   setExpandedId(expandedId === log.id ? null : log.id)
                 }
@@ -65,8 +65,8 @@ export default function RequestLog() {
                   <span
                     className={`rounded px-1.5 py-0.5 font-mono font-bold ${
                       log.method === "GET"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-violet-100 text-violet-700"
+                        ? "bg-emerald-50 text-emerald-600"
+                        : "bg-violet-50 text-violet-600"
                     }`}
                   >
                     {log.method}
@@ -74,15 +74,15 @@ export default function RequestLog() {
                   <span className="font-mono font-medium text-zinc-700">
                     /trpc/{log.path}
                   </span>
-                  <span className="ml-auto text-zinc-400">
+                  <span className="ml-auto text-zinc-300 tabular-nums">
                     {log.duration}ms
                   </span>
                   {log.error ? (
-                    <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">
+                    <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-600 font-medium">
                       ERROR
                     </span>
                   ) : (
-                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-700">
+                    <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-600 font-medium">
                       OK
                     </span>
                   )}
@@ -94,7 +94,7 @@ export default function RequestLog() {
                         <span className="font-semibold text-zinc-500">
                           Input:
                         </span>
-                        <pre className="code-block mt-0.5 overflow-x-auto rounded bg-zinc-50 p-2 text-zinc-700">
+                        <pre className="code-block mt-0.5 overflow-x-auto rounded-md bg-zinc-50 p-2.5 text-zinc-600">
                           {JSON.stringify(log.input, null, 2)}
                         </pre>
                       </div>
@@ -104,7 +104,7 @@ export default function RequestLog() {
                         <span className="font-semibold text-zinc-500">
                           Output:
                         </span>
-                        <pre className="code-block mt-0.5 overflow-x-auto rounded bg-zinc-50 p-2 text-zinc-700">
+                        <pre className="code-block mt-0.5 overflow-x-auto rounded-md bg-zinc-50 p-2.5 text-zinc-600">
                           {JSON.stringify(log.output, null, 2)}
                         </pre>
                       </div>

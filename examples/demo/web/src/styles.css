@@ -7,6 +7,11 @@
   --color-ts-blue: #3178C6;
 }
 
+/* Monospace utility */
+.mono {
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", monospace;
+}
+
 /* Code block styling */
 .code-block {
   font-family: "JetBrains Mono", "Fira Code", "SF Mono", monospace;

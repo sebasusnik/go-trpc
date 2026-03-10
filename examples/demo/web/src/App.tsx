@@ -66,19 +66,19 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-50 text-zinc-900">
+    <div className="flex h-screen flex-col bg-zinc-100 text-zinc-900">
       {/* Header */}
-      <header className="border-b border-zinc-200 bg-white px-4 py-3 md:px-6">
+      <header className="border-b border-zinc-200/80 bg-white/80 backdrop-blur-sm px-4 py-2.5 md:px-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 md:gap-3">
-            <h1 className="text-lg font-bold tracking-tight">
+            <h1 className="text-sm font-semibold tracking-tight">
               <span className="text-go-blue">go-trpc</span>{" "}
               <span className="text-zinc-400 font-normal">demo</span>
             </h1>
-            <span className="hidden sm:inline rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs text-zinc-500">
+            <span className="hidden sm:inline rounded bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500 font-medium">
               Chat Rooms
             </span>
-            <span className="hidden sm:inline rounded-full bg-go-blue/10 px-2.5 py-0.5 text-xs text-go-blue font-medium">
+            <span className="hidden sm:inline rounded bg-go-blue/10 px-2 py-0.5 text-[11px] text-go-blue font-medium mono">
               {username}
             </span>
           </div>
@@ -135,7 +135,7 @@ export default function App() {
           className={`flex-1 flex overflow-hidden ${mobileView !== "app" ? "hidden md:flex" : ""}`}
         >
           {/* Room sidebar */}
-          <div className="w-56 shrink-0 border-r border-zinc-200 bg-white">
+          <div className="w-56 shrink-0 border-r border-zinc-200/80 bg-white">
             <RoomList
               activeRoomId={activeRoom?.id ?? null}
               onSelectRoom={setActiveRoom}
@@ -151,7 +151,7 @@ export default function App() {
                 username={username}
               />
             ) : (
-              <div className="flex h-full items-center justify-center text-sm text-zinc-400">
+              <div className="flex h-full items-center justify-center text-sm text-zinc-300">
                 Select a room to start chatting
               </div>
             )}
@@ -171,19 +171,19 @@ export default function App() {
             if (e.key === "ArrowRight")
               setSidebarWidth((w) => Math.max(280, w - 20));
           }}
-          className="hidden md:block w-1 cursor-col-resize bg-zinc-200 hover:bg-zinc-400 active:bg-zinc-500 transition-colors"
+          className="hidden md:block w-px cursor-col-resize bg-zinc-200 hover:bg-zinc-300 active:bg-zinc-400 transition-colors"
         />
 
         {/* Right panel — Request Log / Code */}
         <aside
-          className={`flex min-w-0 flex-col border-l border-zinc-200 bg-white ${
+          className={`flex min-w-0 flex-col border-l border-zinc-200/80 bg-white ${
             mobileView !== "devtools" ? "hidden md:flex" : "flex-1"
           } md:flex`}
           style={{
             width: mobileView === "devtools" ? undefined : sidebarWidth,
           }}
         >
-          <div className="flex border-b border-zinc-200">
+          <div className="flex border-b border-zinc-200/80">
             <button
               type="button"
               onClick={() => setBottomPanel("log")}
@@ -211,7 +211,7 @@ export default function App() {
               onClick={() => setBottomPanel("playground")}
               className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
                 bottomPanel === "playground"
-                  ? "border-b-2 border-go-blue text-go-blue"
+                  ? "border-b-2 border-zinc-900 text-zinc-900"
                   : "text-zinc-400 hover:text-zinc-600"
               }`}
             >
