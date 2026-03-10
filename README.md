@@ -1,22 +1,75 @@
+<div align="center">
+
 # go-trpc
 
-tRPC protocol adapter for Go — write handlers in Go with typed structs, generate TypeScript types, and consume them with `@trpc/client`. Full type-safety, zero Protobuf.
+**End-to-end typesafe APIs with Go + TypeScript**
 
-**[Live Demo](https://go-trpc-production.up.railway.app/)** — real-time chat app with SSE subscriptions, built with go-trpc
+Write Go handlers. Generate TypeScript types. Use `@trpc/client`. Zero Protobuf.
+
+[![CI](https://github.com/sebasusnik/go-trpc/actions/workflows/ci.yml/badge.svg)](https://github.com/sebasusnik/go-trpc/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/sebasusnik/go-trpc.svg)](https://pkg.go.dev/github.com/sebasusnik/go-trpc)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+<br />
+
+### [Try the Live Demo](https://go-trpc-production.up.railway.app/)
+
+A real-time chat app with rooms, instant messaging via SSE subscriptions, and built-in dev tools — all powered by go-trpc.
+
+[Source code](./examples/demo/) · [Report Bug](https://github.com/sebasusnik/go-trpc/issues)
+
+</div>
+
+<br />
+
+## How It Works
+
+Define a Go handler with typed structs:
+
+```go
+gotrpc.Query(r, "getUser",
+    func(ctx context.Context, input GetUserInput) (User, error) {
+        return db.FindUser(input.ID)
+    },
+)
+```
+
+Generate TypeScript types from your Go code:
+
+```bash
+gotrpc generate ./api --output ./web/src/generated/router.d.ts
+```
+
+Call it from the frontend with full type-safety:
+
+```typescript
+const user = await trpc.getUser.query({ id: '1' }); // fully typed ✓
+```
+
+That's it. Go structs become TypeScript types. No schemas, no Protobuf, no manual type definitions.
 
 ## Features
 
-- **tRPC protocol compatible** — works with `@trpc/client` v10/v11 unmodified
-- **Go generics** — compile-time type safety for handlers
-- **Subscriptions** — real-time streaming via Server-Sent Events (SSE)
-- **Codegen CLI** — AST-based TypeScript generation from Go structs
-- **Nested routers** — `router.Merge("user", userRouter)` → `user.get`, `user.create`
-- **Middlewares** — rate limiting, auth, input validation, OpenTelemetry
-- **Batch support** — handles tRPC batch queries and mutations
-- **Deploy anywhere** — stdlib HTTP, AWS Lambda, Cloudflare Workers
-- **Zero runtime dependencies** — only stdlib for the core router
+| | Feature | |
+|---|---|---|
+| **Protocol** | tRPC v10/v11 compatible | Works with `@trpc/client` unmodified |
+| **Type Safety** | Go generics + codegen | Compile-time safety on both ends |
+| **Real-time** | SSE subscriptions | Stream events with `<-chan T` |
+| **Middlewares** | Rate limiting, auth, OTel | Chainable, context-based |
+| **Batching** | Batch queries & mutations | Built-in tRPC batch support |
+| **Deploy** | Anywhere | stdlib HTTP, Lambda, Cloudflare Workers |
+| **Dependencies** | Zero | Only stdlib for the core router |
 
 ## Quick Start
+
+### Install
+
+```bash
+go get github.com/sebasusnik/go-trpc
+go install github.com/sebasusnik/go-trpc/cmd/gotrpc@latest
+```
+
+### Server (Go)
 
 ```go
 package main
@@ -50,14 +103,7 @@ func main() {
 }
 ```
 
-## Generate TypeScript Types
-
-```bash
-go install github.com/sebasusnik/go-trpc/cmd/gotrpc@latest
-gotrpc generate . --output ./frontend/src/generated/router.d.ts
-```
-
-## Use in Frontend
+### Client (TypeScript)
 
 ```typescript
 import { createTRPCClient, httpLink } from '@trpc/client';
@@ -67,16 +113,22 @@ const trpc = createTRPCClient<AppRouter>({
   links: [httpLink({ url: 'http://localhost:8080/trpc' })],
 });
 
-const user = await trpc.getUser.query({ id: '1' }); // fully typed
+const user = await trpc.getUser.query({ id: '1' });
+//    ^? { id: string; name: string; email: string }
 ```
 
-## Subscriptions (SSE)
+## Real-time Subscriptions
+
+Stream events from Go channels over Server-Sent Events:
 
 ```go
 gotrpc.Subscription(r, "onMessage",
     func(ctx context.Context, input RoomInput) (<-chan Message, error) {
-        ch := make(chan Message)
-        // send events on ch, close when done
+        ch := store.Subscribe(input.RoomID)
+        go func() {
+            <-ctx.Done()
+            store.Unsubscribe(input.RoomID, ch)
+        }()
         return ch, nil
     },
 )
@@ -85,28 +137,43 @@ gotrpc.Subscription(r, "onMessage",
 ```typescript
 const es = new EventSource('/trpc/onMessage?input={"roomId":"1"}');
 es.addEventListener('data', (e) => {
-    const msg = JSON.parse(e.data).result.data;
+    const msg = JSON.parse(e.data).result.data; // typed Message
 });
 ```
 
-## Deploy Adapters
+## Nested Routers
+
+Organize procedures into namespaces:
 
 ```go
+userRouter := gotrpc.NewRouter()
+gotrpc.Query(userRouter, "get", getUser)
+gotrpc.Mutation(userRouter, "create", createUser)
+
+r := gotrpc.NewRouter()
+r.Merge("user", userRouter)  // → user.get, user.create
+```
+
+## Middlewares
+
+```go
+r.Use(gotrpc.RateLimit(100))              // 100 req/s per IP
+r.Use(gotrpc.BearerAuth(validateToken))   // JWT/token auth
+r.Use(gotrpc.MaxInputSize(4096))          // limit payload size
+```
+
+## Deploy Anywhere
+
+```go
+// Standard HTTP — Docker, Railway, Fly.io, etc.
+http.ListenAndServe(":8080", r.Handler())
+
 // AWS Lambda
-import trpclambda "github.com/sebasusnik/go-trpc/pkg/adapters/lambda"
 trpclambda.Start(r)
 
 // Cloudflare Workers
-import trpccf "github.com/sebasusnik/go-trpc/pkg/adapters/cloudflare"
 trpccf.Serve(r)
-
-// Standard HTTP (Docker, Railway, Fly.io, etc.)
-http.ListenAndServe(":8080", r.Handler())
 ```
-
-## Demo
-
-The [live demo](https://go-trpc-production.up.railway.app/) is a real-time chat app showcasing queries, mutations, and SSE subscriptions. Source code is in [`examples/demo/`](./examples/demo/).
 
 ## License
 
