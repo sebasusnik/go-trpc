@@ -4,7 +4,8 @@
 
 - **Router** — Query/Mutation/Subscription registration, nested routers via Merge, middleware, CORS
 - **Codegen** — Parses Go AST, generates `.d.ts` compatible with `@trpc/client` v11
-- **CLI** — `gotrpc generate` with watch mode, `gotrpc init` for config scaffolding
+- **CLI** — `gotrpc generate` with watch mode, `gotrpc init` for project scaffolding (with `--ws` option)
+- **Automated versioning** — Version derived from git tags via ldflags / `debug.ReadBuildInfo()`
 - **Lambda adapter** — Deploy to AWS Lambda with Function URLs or API Gateway v2
 - **Batch support** — `?batch=1` for multiple procedures in one request
 - **Playground** — Go-to-TypeScript type converter (`codegen.ConvertGoToTS`)
@@ -72,6 +73,9 @@
 - [x] **React Query integration docs** — Guide for `@trpc/react-query` setup, queries, mutations, subscriptions (`docs/react-query.md`)
 - [x] **Request cancellation docs** — `context.Done()` / `AbortController` patterns for queries, SSE, and WebSocket (`docs/cancellation.md`)
 - [x] **Cancellation tests** — Verified query abort and SSE disconnect propagate context cancellation
+- [x] **CLI: `gotrpc init --ws`** — Scaffold with `splitLink` + `wsLink` for WebSocket subscriptions
+- [x] **CLI: smart project detection** — Auto-detect `src/` layout, use configured router name in templates
+- [x] **Automated versioning** — Version from git tags (ldflags) or `runtime/debug.ReadBuildInfo()`, no manual edits
 
 ### v0.6 — Future
 
