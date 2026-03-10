@@ -148,7 +148,7 @@ export default function App() {
 
           {/* Chat area — hidden on mobile when no room is active */}
           <div
-            className={`flex-1 bg-white ${
+            className={`flex-1 overflow-hidden bg-white ${
               !activeRoom ? "hidden md:block" : ""
             }`}
           >
