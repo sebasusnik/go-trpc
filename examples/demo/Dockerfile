@@ -2,7 +2,7 @@
 # Run: docker build -f examples/demo/Dockerfile -t go-trpc-demo .
 
 # Stage 1: Build Go server
-FROM golang:1.24 AS api
+FROM golang:1.25 AS api
 WORKDIR /app
 COPY go.mod go.sum ./
 COPY pkg/ ./pkg/
