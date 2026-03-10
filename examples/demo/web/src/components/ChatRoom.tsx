@@ -22,22 +22,32 @@ export default function ChatRoom({ roomId, roomName, username }: Props) {
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const apiUrl = import.meta.env.VITE_API_URL
-    ? `${import.meta.env.VITE_API_URL}trpc`
-    : "/trpc";
+  const seenIds = useRef(new Set<string>());
+
+  const addMessage = (msg: Message) => {
+    if (seenIds.current.has(msg.id)) return;
+    seenIds.current.add(msg.id);
+    setMessages((prev) => [...prev, msg]);
+  };
 
   // Load message history
   useEffect(() => {
     setMessages([]);
+    seenIds.current = new Set();
     trpc.room.messages
       .query({ roomId })
-      .then((res) => setMessages(res.messages))
+      .then((res) => {
+        const msgs = res.messages ?? [];
+        for (const m of msgs) seenIds.current.add(m.id);
+        setMessages(msgs);
+      })
       .catch(() => setError("Failed to load messages"));
   }, [roomId]);
 
   // Subscribe to new messages via SSE
   useEffect(() => {
-    const url = `${apiUrl}/chat.subscribe?input=${encodeURIComponent(
+    const base = window.location.origin;
+    const url = `${base}/trpc/chat.subscribe?input=${encodeURIComponent(
       JSON.stringify({ json: { roomId } })
     )}`;
     const es = new EventSource(url);
@@ -46,20 +56,14 @@ export default function ChatRoom({ roomId, roomName, username }: Props) {
       try {
         const parsed = JSON.parse(e.data);
         const msg = parsed.result?.data as Message;
-        if (msg) {
-          setMessages((prev) => [...prev, msg]);
-        }
+        if (msg) addMessage(msg);
       } catch {
         // ignore parse errors
       }
     });
 
-    es.addEventListener("error", () => {
-      // EventSource auto-reconnects
-    });
-
     return () => es.close();
-  }, [roomId, apiUrl]);
+  }, [roomId]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -75,14 +79,15 @@ export default function ChatRoom({ roomId, roomName, username }: Props) {
     setInput("");
 
     try {
-      await trpc.chat.send.mutate({ roomId, username, content });
+      const msg = await trpc.chat.send.mutate({ roomId, username, content });
+      addMessage(msg);
     } catch (err) {
       if (err instanceof GoTRPCError) {
         setError(err.message);
       } else {
         setError("Failed to send message");
       }
-      setInput(content); // restore on failure
+      setInput(content);
     } finally {
       setSending(false);
     }
@@ -125,8 +130,8 @@ export default function ChatRoom({ roomId, roomName, username }: Props) {
       )}
 
       {/* Input */}
-      <div className="border-t border-zinc-200 p-3">
-        <div className="flex gap-2">
+      <div className="border-t border-zinc-200 p-4">
+        <div className="flex gap-3">
           <input
             type="text"
             value={input}
@@ -138,13 +143,13 @@ export default function ChatRoom({ roomId, roomName, username }: Props) {
               }
             }}
             placeholder="Type a message..."
-            className="flex-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:border-go-blue focus:outline-none"
+            className="flex-1 rounded-lg border border-zinc-200 px-4 py-2.5 text-sm focus:border-go-blue focus:outline-none"
           />
           <button
             type="button"
             onClick={handleSend}
             disabled={!input.trim() || sending}
-            className="rounded-lg bg-go-blue px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-go-dark disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            className="rounded-lg bg-go-blue px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-go-dark disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             Send
           </button>

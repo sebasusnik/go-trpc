@@ -131,7 +131,7 @@ export default function App() {
         {/* Left panel — Room list + Chat */}
         <main className={`flex-1 flex overflow-hidden ${mobileView !== "app" ? "hidden md:flex" : ""}`}>
           {/* Room sidebar */}
-          <div className="w-48 shrink-0 border-r border-zinc-200 bg-white">
+          <div className="w-56 shrink-0 border-r border-zinc-200 bg-white">
             <RoomList
               activeRoomId={activeRoom?.id ?? null}
               onSelectRoom={setActiveRoom}
