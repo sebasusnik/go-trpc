@@ -3,8 +3,18 @@ set -e
 
 echo "Running pre-commit checks..."
 
+echo ""
+echo "=== Go ==="
 make lint
 make vet
 make test
 
+echo ""
+echo "=== Demo (Frontend) ==="
+cd examples/demo/web
+npx biome check src/
+npx tsc -b
+cd - > /dev/null
+
+echo ""
 echo "All checks passed."
