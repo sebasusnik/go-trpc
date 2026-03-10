@@ -6,7 +6,7 @@ import type { AppRouter } from "./generated/router";
 export type LogEntry = {
   id: number;
   timestamp: string;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "SUB";
   path: string;
   input?: unknown;
   output?: unknown;
@@ -24,10 +24,14 @@ export function onLog(listener: (entry: LogEntry) => void) {
   };
 }
 
-function emitLog(entry: LogEntry) {
+export function emitLog(entry: LogEntry) {
   for (const l of logListeners) {
     l(entry);
   }
+}
+
+export function nextLogId() {
+  return ++logId;
 }
 
 // --- Client ---

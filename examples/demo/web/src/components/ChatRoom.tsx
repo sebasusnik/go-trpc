@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GoTRPCError, trpc } from "../trpc";
+import { emitLog, GoTRPCError, nextLogId, trpc } from "../trpc";
 import ChatMessage from "./ChatMessage";
 
 type Message = {
@@ -57,12 +57,34 @@ export default function ChatRoom({
       JSON.stringify({ roomId }),
     )}`;
     const es = new EventSource(url);
+    const start = performance.now();
+
+    es.addEventListener("open", () => {
+      emitLog({
+        id: nextLogId(),
+        timestamp: new Date().toISOString(),
+        method: "SUB",
+        path: "chat.subscribe",
+        input: { roomId },
+        duration: Math.round(performance.now() - start),
+      });
+    });
 
     es.addEventListener("data", (e) => {
       try {
         const parsed = JSON.parse(e.data);
         const msg = parsed.result?.data as Message;
-        if (msg) addMessage(msg);
+        if (msg) {
+          addMessage(msg);
+          emitLog({
+            id: nextLogId(),
+            timestamp: new Date().toISOString(),
+            method: "SUB",
+            path: "chat.subscribe",
+            output: msg,
+            duration: 0,
+          });
+        }
       } catch {
         // ignore parse errors
       }

@@ -41,7 +41,7 @@ export default function RequestLog() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-2">
         {logs.length === 0 ? (
           <div className="flex h-full items-center justify-center text-xs text-zinc-300">
-            Interact with the task manager to see tRPC requests here
+            Interact with the chat to see tRPC requests here
           </div>
         ) : (
           <div className="space-y-1.5">
@@ -64,9 +64,11 @@ export default function RequestLog() {
                 <div className="flex items-center gap-2">
                   <span
                     className={`rounded px-1.5 py-0.5 font-mono font-bold ${
-                      log.method === "GET"
-                        ? "bg-emerald-50 text-emerald-600"
-                        : "bg-violet-50 text-violet-600"
+                      log.method === "SUB"
+                        ? "bg-amber-50 text-amber-600"
+                        : log.method === "GET"
+                          ? "bg-emerald-50 text-emerald-600"
+                          : "bg-violet-50 text-violet-600"
                     }`}
                   >
                     {log.method}
@@ -80,6 +82,10 @@ export default function RequestLog() {
                   {log.error ? (
                     <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-600 font-medium">
                       ERROR
+                    </span>
+                  ) : log.method === "SUB" ? (
+                    <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-600 font-medium">
+                      {log.output ? "DATA" : "OPEN"}
                     </span>
                   ) : (
                     <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-600 font-medium">
