@@ -136,7 +136,7 @@ func generateDTS(result *ParseResult, opts GenerateOptions) string {
 
 		for _, name := range names {
 			t := namedTypes[name]
-			b.WriteString(fmt.Sprintf("type %s = %s\n\n", name, t.Definition))
+			b.WriteString(fmt.Sprintf("type %s = %s;\n\n", name, t.Definition))
 		}
 	}
 
@@ -149,7 +149,7 @@ func generateDTS(result *ParseResult, opts GenerateOptions) string {
 		sort.Strings(astNames)
 
 		for _, name := range astNames {
-			b.WriteString(fmt.Sprintf("type %s = %s\n\n", name, astNamedTypes[name]))
+			b.WriteString(fmt.Sprintf("type %s = %s;\n\n", name, astNamedTypes[name]))
 		}
 	}
 
@@ -261,7 +261,17 @@ func generateDTS(result *ParseResult, opts GenerateOptions) string {
 		exportNames = append(exportNames, name)
 	}
 	sort.Strings(exportNames)
-	b.WriteString(fmt.Sprintf("export type { %s };\n\n", strings.Join(exportNames, ", ")))
+	// Format export: single line if short, multi-line if long
+	exportLine := "export type { " + strings.Join(exportNames, ", ") + " };"
+	if len(exportLine) > 80 {
+		b.WriteString("export type {\n")
+		for _, name := range exportNames {
+			b.WriteString("  " + name + ",\n")
+		}
+		b.WriteString("};\n\n")
+	} else {
+		b.WriteString(exportLine + "\n\n")
+	}
 
 	// Helper types: RouterInputs and RouterOutputs (using dotted keys)
 	b.WriteString("export type RouterInputs = {\n")
