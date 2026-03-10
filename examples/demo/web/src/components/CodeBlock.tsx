@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { type Highlighter, createHighlighter } from "shiki";
+import { createHighlighter, type Highlighter } from "shiki";
 
 type Props = {
   code: string;
@@ -7,7 +7,6 @@ type Props = {
 };
 
 // Single shared highlighter instance — loads theme + grammars once
-let highlighter: Highlighter | null = null;
 let highlighterPromise: Promise<Highlighter> | null = null;
 const loadedLangs = new Set<string>();
 
@@ -17,7 +16,6 @@ export function getHighlighter(lang: string): Promise<Highlighter> {
       themes: ["one-dark-pro"],
       langs: [lang],
     }).then((h) => {
-      highlighter = h;
       loadedLangs.add(lang);
       return h;
     });

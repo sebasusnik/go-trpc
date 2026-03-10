@@ -20,7 +20,9 @@ type Room = {
 
 export default function App() {
   const [health, setHealth] = useState<HealthStatus>(null);
-  const [bottomPanel, setBottomPanel] = useState<"log" | "code" | "playground">("log");
+  const [bottomPanel, setBottomPanel] = useState<"log" | "code" | "playground">(
+    "log",
+  );
   const [sidebarWidth, setSidebarWidth] = useState(420);
   const [mobileView, setMobileView] = useState<"app" | "devtools">("app");
   const [activeRoom, setActiveRoom] = useState<Room | null>(null);
@@ -129,7 +131,9 @@ export default function App() {
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel — Room list + Chat */}
-        <main className={`flex-1 flex overflow-hidden ${mobileView !== "app" ? "hidden md:flex" : ""}`}>
+        <main
+          className={`flex-1 flex overflow-hidden ${mobileView !== "app" ? "hidden md:flex" : ""}`}
+        >
           {/* Room sidebar */}
           <div className="w-56 shrink-0 border-r border-zinc-200 bg-white">
             <RoomList
@@ -155,7 +159,6 @@ export default function App() {
         </main>
 
         {/* Drag handle — desktop only */}
-        {/* biome-ignore lint/a11y/useSemanticElements: interactive resize handle, not a static separator */}
         <div
           role="separator"
           tabIndex={0}
@@ -176,7 +179,9 @@ export default function App() {
           className={`flex min-w-0 flex-col border-l border-zinc-200 bg-white ${
             mobileView !== "devtools" ? "hidden md:flex" : "flex-1"
           } md:flex`}
-          style={{ width: mobileView === "devtools" ? undefined : sidebarWidth }}
+          style={{
+            width: mobileView === "devtools" ? undefined : sidebarWidth,
+          }}
         >
           <div className="flex border-b border-zinc-200">
             <button

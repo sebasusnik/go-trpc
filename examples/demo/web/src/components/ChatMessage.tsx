@@ -5,7 +5,12 @@ type Props = {
   isOwn: boolean;
 };
 
-export default function ChatMessage({ username, content, createdAt, isOwn }: Props) {
+export default function ChatMessage({
+  username,
+  content,
+  createdAt,
+  isOwn,
+}: Props) {
   const time = new Date(createdAt).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",

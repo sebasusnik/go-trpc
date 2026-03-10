@@ -7,7 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  go:
+    name: Go
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +26,7 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.11.2
 
       - name: Test
         run: go test -race -coverprofile=coverage.out ./...
@@ -35,3 +36,28 @@ jobs:
         with:
           name: coverage
           path: coverage.out
+
+  demo:
+    name: Demo (Frontend)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/demo/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npx tsc -b
+
+      - name: Lint
+        run: npx biome check src/
+
+      - name: Build
+        run: npx vite build

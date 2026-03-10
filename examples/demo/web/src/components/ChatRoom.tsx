@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { trpc, GoTRPCError } from "../trpc";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { GoTRPCError, trpc } from "../trpc";
 import ChatMessage from "./ChatMessage";
 
 type Message = {
@@ -24,11 +24,11 @@ export default function ChatRoom({ roomId, roomName, username }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const seenIds = useRef(new Set<string>());
 
-  const addMessage = (msg: Message) => {
+  const addMessage = useCallback((msg: Message) => {
     if (seenIds.current.has(msg.id)) return;
     seenIds.current.add(msg.id);
     setMessages((prev) => [...prev, msg]);
-  };
+  }, []);
 
   // Load message history
   useEffect(() => {
@@ -48,7 +48,7 @@ export default function ChatRoom({ roomId, roomName, username }: Props) {
   useEffect(() => {
     const base = window.location.origin;
     const url = `${base}/trpc/chat.subscribe?input=${encodeURIComponent(
-      JSON.stringify({ roomId })
+      JSON.stringify({ roomId }),
     )}`;
     const es = new EventSource(url);
 
@@ -63,12 +63,12 @@ export default function ChatRoom({ roomId, roomName, username }: Props) {
     });
 
     return () => es.close();
-  }, [roomId]);
+  }, [roomId, addMessage]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  });
 
   const handleSend = async () => {
     const content = input.trim();
@@ -123,7 +123,11 @@ export default function ChatRoom({ roomId, roomName, username }: Props) {
       {error && (
         <div className="mx-4 mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
           {error}
-          <button type="button" onClick={() => setError("")} className="ml-2 font-medium cursor-pointer">
+          <button
+            type="button"
+            onClick={() => setError("")}
+            className="ml-2 font-medium cursor-pointer"
+          >
             Dismiss
           </button>
         </div>

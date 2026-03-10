@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { trpc, GoTRPCError } from "../trpc";
-import CodeBlock from "./CodeBlock";
-import { getHighlighter } from "./CodeBlock";
+import { GoTRPCError, trpc } from "../trpc";
+import CodeBlock, { getHighlighter } from "./CodeBlock";
 
 const defaultCode = `type Room struct {
     ID        string \`json:"id"\`

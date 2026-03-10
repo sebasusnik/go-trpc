@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { trpc, GoTRPCError } from "../trpc";
+import { GoTRPCError, trpc } from "../trpc";
 
 type Room = {
   id: string;
@@ -18,21 +18,17 @@ export default function RoomList({ activeRoomId, onSelectRoom }: Props) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  const loadRooms = async () => {
-    try {
-      const res = await trpc.room.list.query();
-      setRooms(res.rooms);
-      // Auto-select first room if none selected
-      if (!activeRoomId && res.rooms.length > 0) {
-        onSelectRoom(res.rooms[0]);
-      }
-    } catch {
-      setError("Failed to load rooms");
-    }
-  };
-
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional mount-only effect
   useEffect(() => {
-    loadRooms();
+    trpc.room.list
+      .query()
+      .then((res) => {
+        setRooms(res.rooms);
+        if (!activeRoomId && res.rooms.length > 0) {
+          onSelectRoom(res.rooms[0]);
+        }
+      })
+      .catch(() => setError("Failed to load rooms"));
   }, []);
 
   const handleCreate = async () => {
@@ -85,9 +81,7 @@ export default function RoomList({ activeRoomId, onSelectRoom }: Props) {
       </div>
 
       {/* Error */}
-      {error && (
-        <div className="mx-3 mb-2 text-xs text-red-500">{error}</div>
-      )}
+      {error && <div className="mx-3 mb-2 text-xs text-red-500">{error}</div>}
 
       {/* Create room */}
       <div className="border-t border-zinc-200 p-3">
