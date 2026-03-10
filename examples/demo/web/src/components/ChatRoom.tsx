@@ -48,7 +48,7 @@ export default function ChatRoom({ roomId, roomName, username }: Props) {
   useEffect(() => {
     const base = window.location.origin;
     const url = `${base}/trpc/chat.subscribe?input=${encodeURIComponent(
-      JSON.stringify({ json: { roomId } })
+      JSON.stringify({ roomId })
     )}`;
     const es = new EventSource(url);
 
