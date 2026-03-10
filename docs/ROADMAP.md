@@ -24,11 +24,14 @@
 - **httpBatchStreamLink** — Streaming batch responses with `trpc-batch-mode: stream`
 - **HTTP status codes** — Correct per-error HTTP status propagation in responses
 - **207 Multi-Status** — Batch responses with mixed success/error return 207
-- **Middleware library** — Built-in middlewares: `RequestID`, `LoggingMiddleware`, `BearerAuth`, `APIKeyAuth`, `RateLimit`
+- **Middleware library** — Built-in middlewares: `RequestID`, `LoggingMiddleware`, `BearerAuth`, `APIKeyAuth`, `RateLimit`, `RateLimitByKey`, `Timeout`, `MaxConnectionsPerIP`, `MaxInputSize`
+- **Per-procedure middleware** — `WithMiddleware()` option to attach middlewares to individual procedures
 - **OpenTelemetry** — Optional `pkg/otel` package with tracing spans and `rpc.server.duration` metrics per procedure
 - **Adapter: CloudFlare Workers** — Deploy to Workers via `syumai/workers` (`pkg/adapters/cloudflare`)
 - **Adapter: standard `net/http`** — Production server with timeouts and graceful shutdown (`pkg/adapters/nethttp`)
 - **Codegen: `.ts` runtime output** — Runtime procedure metadata export alongside `.d.ts` types
+- **CLI: `--dry-run`** — Preview generated output without writing to disk (useful for CI)
+- **WebSocket subscriptions** — `wsLink` protocol support for multiplexed subscriptions on a single connection (`pkg/router/ws.go`)
 
 ## Next steps
 
@@ -55,17 +58,23 @@
 
 - [x] **Data transformers** — Pluggable transformer system with superjson support (`WithTransformer`)
 - [x] **httpBatchStreamLink** — Streaming batch responses via `trpc-batch-mode: stream` header
-- [x] **Middleware library** — Built-in middlewares: `RequestID`, `LoggingMiddleware`, `BearerAuth`, `APIKeyAuth`, `RateLimit`
+- [x] **Middleware library** — Built-in middlewares: `RequestID`, `LoggingMiddleware`, `BearerAuth`, `APIKeyAuth`, `RateLimit`, `RateLimitByKey`, `Timeout`, `MaxConnectionsPerIP`, `MaxInputSize`
+- [x] **Per-procedure middleware** — `WithMiddleware()` option for attaching middlewares to individual procedures
 - [x] **OpenTelemetry** — Optional `pkg/otel` package with tracing and `rpc.server.duration` metrics
 - [x] **Adapter: CloudFlare Workers** — Adapter for Workers runtime via `syumai/workers`
 - [x] **Adapter: standard `net/http`** — Production server with configurable timeouts and graceful shutdown
 - [x] **Codegen: multiple output formats** — Support `.ts` (runtime metadata) in addition to `.d.ts` (types only)
+- [x] **CLI: `--dry-run`** — Preview codegen output without writing to disk
 
-### v0.5 — Ecosystem
+### v0.5 — Ecosystem ✅
 
-- [ ] **WebSocket subscriptions** — Support for `wsLink` alongside SSE for real-time procedures
-- [ ] **httpBatchLink verification** — Ensure full compatibility with `@trpc/client`'s `httpBatchLink` (partially implemented)
-- [ ] **React Query integration docs** — Guide for using `@trpc/react-query` with go-trpc
-- [ ] **File uploads** — Support `FormData` / `multipart` input for mutation procedures
-- [ ] **Codegen plugins** — Hook system for custom type transformations (e.g. `time.Time` → `string`, custom validators)
-- [ ] **Request cancellation docs** — Document and verify `context.Done()` / `AbortController` support
+- [x] **WebSocket subscriptions** — `wsLink` protocol support with multiplexed subscriptions on a single connection (`ws.go`)
+- [x] **React Query integration docs** — Guide for `@trpc/react-query` setup, queries, mutations, subscriptions (`docs/react-query.md`)
+- [x] **Request cancellation docs** — `context.Done()` / `AbortController` patterns for queries, SSE, and WebSocket (`docs/cancellation.md`)
+- [x] **Cancellation tests** — Verified query abort and SSE disconnect propagate context cancellation
+
+### v0.6 — Future
+
+- [ ] **Codegen: generic type improvements** — Better handling of edge cases in generic struct mapping
+- [ ] **OpenTelemetry: WebSocket spans** — Trace individual WebSocket subscription lifecycles
+- [ ] **Adapter improvements** — WebSocket support in Lambda (via API Gateway WebSocket API) and Cloudflare (Durable Objects)

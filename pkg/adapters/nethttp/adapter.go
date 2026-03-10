@@ -58,7 +58,7 @@ func NewServer(r *router.Router, cfg Config) *Server {
 	router.WithBasePath(cfg.BasePath)(r)
 
 	mux := http.NewServeMux()
-	mux.Handle("/", r.Handler())
+	mux.Handle(cfg.BasePath+"/", r.Handler())
 
 	return &Server{
 		httpServer: &http.Server{

@@ -156,6 +156,66 @@ func MaxInputSize(bytes int) Middleware {
 	}
 }
 
+// RateLimitByKey returns a middleware that limits requests per second per key.
+// The keyFunc extracts the rate-limiting key from the context (e.g. client IP, user ID).
+// Inactive limiters are cleaned up periodically to prevent memory growth.
+func RateLimitByKey(requestsPerSecond int, keyFunc func(ctx context.Context) string) Middleware {
+	type entry struct {
+		limiter  *rate.Limiter
+		lastSeen time.Time
+	}
+
+	var mu sync.Mutex
+	limiters := make(map[string]*entry)
+
+	// Cleanup goroutine: evict entries not seen in the last 5 minutes.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			mu.Lock()
+			cutoff := time.Now().Add(-5 * time.Minute)
+			for k, e := range limiters {
+				if e.lastSeen.Before(cutoff) {
+					delete(limiters, k)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
+
+	return func(next Handler) Handler {
+		return func(ctx context.Context, req Request) (interface{}, error) {
+			key := keyFunc(ctx)
+
+			mu.Lock()
+			e, ok := limiters[key]
+			if !ok {
+				e = &entry{limiter: rate.NewLimiter(rate.Limit(requestsPerSecond), requestsPerSecond)}
+				limiters[key] = e
+			}
+			e.lastSeen = time.Now()
+			mu.Unlock()
+
+			if !e.limiter.Allow() {
+				return nil, trpcerrors.New(trpcerrors.ErrTooManyRequests, "rate limit exceeded")
+			}
+			return next(ctx, req)
+		}
+	}
+}
+
+// Timeout returns a middleware that cancels procedure execution after the given duration.
+func Timeout(d time.Duration) Middleware {
+	return func(next Handler) Handler {
+		return func(ctx context.Context, req Request) (interface{}, error) {
+			ctx, cancel := context.WithTimeout(ctx, d)
+			defer cancel()
+			return next(ctx, req)
+		}
+	}
+}
+
 func generateID() string {
 	b := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, b); err != nil {

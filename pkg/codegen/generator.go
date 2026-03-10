@@ -15,6 +15,7 @@ type GenerateOptions struct {
 	RouterName string // defaults to "AppRouter"
 	SourcePath string
 	Format     string // "dts" (default) or "ts"
+	DryRun     bool   // print output to stdout instead of writing to disk
 }
 
 // Generate parses the Go source and generates the .d.ts file.
@@ -42,6 +43,11 @@ func Generate(opts GenerateOptions) error {
 		output = generateTS(result, opts)
 	} else {
 		output = generateDTS(result, opts)
+	}
+
+	if opts.DryRun {
+		fmt.Print(output)
+		return nil
 	}
 
 	// Ensure output directory exists

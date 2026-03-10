@@ -145,13 +145,17 @@ func (r *Router) callSubscription(ctx context.Context, proc *procedure, inputJSO
 	// Apply middlewares by wrapping a sentinel handler that captures the context
 	// after all middlewares have run. If any middleware returns an error (auth, rate limit),
 	// we get that error back and never invoke the subscription handler.
-	if len(r.middlewares) > 0 {
+	allMiddlewares := r.middlewares
+	if len(proc.middlewares) > 0 {
+		allMiddlewares = append(allMiddlewares, proc.middlewares...)
+	}
+	if len(allMiddlewares) > 0 {
 		var middlewareCtx context.Context
 		gate := func(ctx context.Context, req Request) (interface{}, error) {
 			middlewareCtx = ctx
 			return nil, nil
 		}
-		gated := applyMiddlewares(gate, r.middlewares)
+		gated := applyMiddlewares(gate, allMiddlewares)
 		if _, err := gated(ctx, Request{Input: inputJSON}); err != nil {
 			return nil, err
 		}

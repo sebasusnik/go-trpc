@@ -73,6 +73,50 @@ func TestServerDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestServerBasePathMountIsolation(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "ping", func(ctx context.Context, input struct{}) (string, error) {
+		return "pong", nil
+	})
+
+	srv := nethttp.NewServer(r, nethttp.Config{
+		Addr:     "127.0.0.1:18925",
+		BasePath: "/api",
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Start()
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	// Requests to /api/ping should work
+	resp, err := http.Get("http://127.0.0.1:18925/api/ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 at /api/ping, got %d: %s", resp.StatusCode, body)
+	}
+
+	// Requests to root / should NOT be handled (404 from default mux)
+	resp2, err := http.Get("http://127.0.0.1:18925/other/path")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode == http.StatusOK {
+		t.Error("expected non-200 for /other/path, but got 200")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
+	<-errCh
+}
+
 func TestServerCustomBasePath(t *testing.T) {
 	r := router.NewRouter(router.WithLogger(router.NopLogger))
 	router.Query(r, "ping", func(ctx context.Context, input struct{}) (string, error) {

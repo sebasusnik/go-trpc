@@ -523,6 +523,142 @@ func TestMaxInputSize_EmptyInput(t *testing.T) {
 	}
 }
 
+func TestRateLimitByKey_DifferentKeys(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.RateLimitByKey(2, func(ctx context.Context) string {
+		// Use a query param as the key for testing
+		return router.GetQueryParam(ctx, "user")
+	}))
+	router.Query(r, "ping", func(ctx context.Context, input struct{}) (string, error) {
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Fire 10 requests rapidly for user "alice" — some should be rate limited
+	limited := 0
+	for i := 0; i < 10; i++ {
+		resp, err := http.Get(srv.URL + "/trpc/ping?user=alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			limited++
+		}
+		resp.Body.Close()
+	}
+	if limited == 0 {
+		t.Error("expected some requests for 'alice' to be rate limited")
+	}
+
+	// "bob" should have a separate limiter — first request should succeed
+	resp, err := http.Get(srv.URL + "/trpc/ping?user=bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected first request for 'bob' to succeed, got %d", resp.StatusCode)
+	}
+}
+
+func TestRateLimitByKey_UnderLimit(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.RateLimitByKey(100, func(ctx context.Context) string {
+		return "shared"
+	}))
+	router.Query(r, "ok", func(ctx context.Context, input struct{}) (string, error) {
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	for i := 0; i < 5; i++ {
+		resp, err := http.Get(srv.URL + "/trpc/ok")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("request %d: expected 200, got %d", i, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+}
+
+func TestTimeoutMiddleware(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.Timeout(50 * time.Millisecond))
+	router.Query(r, "slow", func(ctx context.Context, input struct{}) (string, error) {
+		select {
+		case <-time.After(5 * time.Second):
+			return "done", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+	router.Query(r, "fast", func(ctx context.Context, input struct{}) (string, error) {
+		return "ok", nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Slow handler should be cancelled by timeout
+	resp, err := http.Get(srv.URL + "/trpc/slow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusOK && strings.Contains(string(body), `"data":"done"`) {
+		t.Error("expected slow handler to be cancelled by timeout")
+	}
+
+	// Fast handler should succeed normally
+	resp2, err := http.Get(srv.URL + "/trpc/fast")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("expected fast handler to succeed, got %d", resp2.StatusCode)
+	}
+}
+
+func TestTimeoutMiddleware_ContextDeadlineSet(t *testing.T) {
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	r.Use(router.Timeout(1 * time.Second))
+	router.Query(r, "check", func(ctx context.Context, input struct{}) (string, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return "no deadline", nil
+		}
+		remaining := time.Until(deadline)
+		if remaining > 0 && remaining <= 1*time.Second {
+			return "has deadline", nil
+		}
+		return fmt.Sprintf("unexpected remaining: %v", remaining), nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/trpc/check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "has deadline") {
+		t.Errorf("expected context to have deadline, got: %s", body)
+	}
+}
+
 func TestGetProcedureName(t *testing.T) {
 	r := router.NewRouter(router.WithLogger(router.NopLogger))
 	router.Query(r, "myProc", func(ctx context.Context, input struct{}) (string, error) {

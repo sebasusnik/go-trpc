@@ -1,4 +1,6 @@
 package main
 
+import gotrpc "github.com/sebasusnik/go-trpc/pkg/router"
+
 // Version is the current version of go-trpc.
-const Version = "0.4.0"
+var Version = gotrpc.Version

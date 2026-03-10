@@ -29,7 +29,7 @@ Requirements: Go 1.25+, [golangci-lint](https://golangci-lint.run/welcome/instal
 ```
 cmd/gotrpc/          CLI tool (generate, init commands)
 pkg/
-  router/            Core tRPC router, HTTP handler, middleware, SSE
+  router/            Core tRPC router, HTTP handler, middleware, SSE, WebSocket
   codegen/           Go → TypeScript type generation (AST parsing)
   errors/            tRPC error codes and types
   adapters/          Deployment adapters (Lambda, CloudFlare, net/http)
@@ -43,6 +43,10 @@ examples/            Usage examples
 
 ```
 HTTP Request → ServeHTTP (handler.go)
+  → WebSocket upgrade? → handleWebSocket (ws.go)
+    → readLoop: dispatch by method
+    → "subscription" → callSubscription → stream channel as JSON frames
+    → "subscription.stop" → cancel subscription context
   → CORS check (handler_cors.go)
   → Route by method (GET=query, POST=mutation)
   → Batch? → handleBatch (handler_batch.go) / handleBatchStream (stream.go)
@@ -54,7 +58,9 @@ HTTP Request → ServeHTTP (handler.go)
     → JSON response
 ```
 
-Subscriptions follow a separate path via SSE (`sse.go`): the handler returns a `<-chan T` that gets streamed as Server-Sent Events.
+Subscriptions support two transports:
+- **SSE** (`sse.go`): handler returns `<-chan T`, streamed as Server-Sent Events over HTTP GET
+- **WebSocket** (`ws.go`): tRPC `wsLink` protocol, multiplexed subscriptions on a single connection
 
 ### Codegen Flow
 
@@ -98,7 +104,7 @@ For subscriptions, middlewares run as a "gate" before the subscription handler �
 - Run `make fmt` before committing
 - `make lint` must pass with 0 issues
 - Avoid `interface{}` when generics work — use `[I any, O any]`
-- Keep the core `pkg/router` dependency-free (stdlib only)
+- Keep the core `pkg/router` minimal on dependencies (stdlib + `golang.org/x/time`, `github.com/coder/websocket`)
 
 ### Error Handling
 

@@ -14,6 +14,7 @@ import (
 
 // ToLambdaHandler converts a *gotrpc.Router into an AWS Lambda handler function
 // compatible with Lambda Function URLs and API Gateway v2 (HTTP API).
+// Note: API Gateway v1 (REST API) is not supported — use v2 or Function URLs.
 func ToLambdaHandler(r *gotrpc.Router) func(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	return func(ctx context.Context, apiReq events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 		httpReq, err := toHTTPRequest(ctx, apiReq)

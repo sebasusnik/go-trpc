@@ -11,7 +11,7 @@ import (
 )
 
 // Version is the current version of go-trpc.
-const Version = "0.4.0"
+const Version = "0.5.0"
 
 // Router is the main tRPC router that holds procedures and middlewares.
 type Router struct {
@@ -96,6 +96,7 @@ func (r *Router) Merge(prefix string, other *Router) {
 			Type:                proc.Type,
 			Handler:             proc.Handler,
 			SubscriptionHandler: proc.SubscriptionHandler,
+			middlewares:         proc.middlewares,
 		}
 	}
 }
@@ -152,11 +153,11 @@ func decodeAndValidate[I any](input []byte) (I, error) {
 	return v, nil
 }
 
-// Query registers a query procedure on the router.
-func Query[I any, O any](r *Router, name string, handler func(ctx context.Context, input I) (O, error)) {
-	r.procedures[name] = &procedure{
+// registerProcedure is the shared implementation for Query and Mutation.
+func registerProcedure[I any, O any](r *Router, name string, procType ProcedureType, handler func(ctx context.Context, input I) (O, error), opts []ProcedureOption) {
+	p := &procedure{
 		Name: name,
-		Type: ProcedureQuery,
+		Type: procType,
 		Handler: func(ctx context.Context, req Request) (interface{}, error) {
 			input, err := decodeAndValidate[I](req.Input)
 			if err != nil {
@@ -165,28 +166,27 @@ func Query[I any, O any](r *Router, name string, handler func(ctx context.Contex
 			return handler(ctx, input)
 		},
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	r.procedures[name] = p
+}
+
+// Query registers a query procedure on the router.
+func Query[I any, O any](r *Router, name string, handler func(ctx context.Context, input I) (O, error), opts ...ProcedureOption) {
+	registerProcedure(r, name, ProcedureQuery, handler, opts)
 }
 
 // Mutation registers a mutation procedure on the router.
-func Mutation[I any, O any](r *Router, name string, handler func(ctx context.Context, input I) (O, error)) {
-	r.procedures[name] = &procedure{
-		Name: name,
-		Type: ProcedureMutation,
-		Handler: func(ctx context.Context, req Request) (interface{}, error) {
-			input, err := decodeAndValidate[I](req.Input)
-			if err != nil {
-				return nil, err
-			}
-			return handler(ctx, input)
-		},
-	}
+func Mutation[I any, O any](r *Router, name string, handler func(ctx context.Context, input I) (O, error), opts ...ProcedureOption) {
+	registerProcedure(r, name, ProcedureMutation, handler, opts)
 }
 
 // Subscription registers a subscription procedure on the router.
 // The handler returns a channel that yields events until closed.
 // The channel is consumed via Server-Sent Events (SSE).
-func Subscription[I any, O any](r *Router, name string, handler func(ctx context.Context, input I) (<-chan O, error)) {
-	r.procedures[name] = &procedure{
+func Subscription[I any, O any](r *Router, name string, handler func(ctx context.Context, input I) (<-chan O, error), opts ...ProcedureOption) {
+	p := &procedure{
 		Name: name,
 		Type: ProcedureSubscription,
 		SubscriptionHandler: func(ctx context.Context, req Request) (<-chan interface{}, error) {
@@ -215,6 +215,10 @@ func Subscription[I any, O any](r *Router, name string, handler func(ctx context
 			return out, nil
 		},
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	r.procedures[name] = p
 }
 
 // NewError creates a new tRPC error (convenience re-export).

@@ -12,29 +12,6 @@ import (
 	trpcerrors "github.com/sebasusnik/go-trpc/pkg/errors"
 )
 
-// tRPC response envelope types.
-type trpcResult struct {
-	Result *trpcData  `json:"result,omitempty"`
-	Error  *trpcError `json:"error,omitempty"`
-}
-
-type trpcData struct {
-	Data interface{} `json:"data"`
-}
-
-type trpcError struct {
-	Message string        `json:"message"`
-	Code    int           `json:"code"`
-	Data    trpcErrorData `json:"data"`
-}
-
-type trpcErrorData struct {
-	Code       string  `json:"code"`
-	HTTPStatus int     `json:"httpStatus"`
-	Path       string  `json:"path"`
-	Stack      *string `json:"stack,omitempty"`
-}
-
 // ServeHTTP implements http.Handler.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Handle CORS preflight
@@ -44,6 +21,12 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+	}
+
+	// WebSocket upgrade — handle before method dispatch
+	if isWebSocketUpgrade(req) {
+		r.handleWebSocket(w, req)
+		return
 	}
 
 	// Extract procedure path by stripping the basePath prefix
@@ -216,6 +199,9 @@ func (r *Router) callProcedure(w http.ResponseWriter, req *http.Request, name st
 	ctx = withProcedureName(ctx, name)
 
 	handler := proc.Handler
+	if len(proc.middlewares) > 0 {
+		handler = applyMiddlewares(handler, proc.middlewares)
+	}
 	if len(r.middlewares) > 0 {
 		handler = applyMiddlewares(handler, r.middlewares)
 	}
@@ -255,20 +241,6 @@ func (r *Router) toErrorResult(err error, path string) trpcResult {
 	}
 
 	return errorResult(code, msg, path)
-}
-
-func errorResult(code int, message, path string) trpcResult {
-	return trpcResult{
-		Error: &trpcError{
-			Message: message,
-			Code:    code,
-			Data: trpcErrorData{
-				Code:       trpcerrors.CodeName(code),
-				HTTPStatus: trpcerrors.HTTPStatus(code),
-				Path:       path,
-			},
-		},
-	}
 }
 
 func (r *Router) writeErrorResponse(w http.ResponseWriter, code int, message string, httpStatus int, path string) {

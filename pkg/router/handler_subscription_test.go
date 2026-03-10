@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -430,6 +431,41 @@ func TestSubscriptionInputMalformedJSON(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected 400 for malformed JSON subscription input, got %d", resp.StatusCode)
+	}
+}
+
+func TestCancellation_SSEClose(t *testing.T) {
+	var ctxCancelled atomic.Bool
+
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Subscription(r, "cancellable", func(ctx context.Context, input struct{}) (<-chan int, error) {
+		ch := make(chan int)
+		go func() {
+			defer close(ch)
+			<-ctx.Done()
+			ctxCancelled.Store(true)
+		}()
+		return ch, nil
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Connect then disconnect quickly
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/trpc/cancellable", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
+	}
+
+	// Wait for server to detect disconnection
+	time.Sleep(300 * time.Millisecond)
+
+	if !ctxCancelled.Load() {
+		t.Error("expected subscription context to be cancelled after SSE client disconnect")
 	}
 }
 

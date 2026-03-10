@@ -12,6 +12,7 @@ import (
 
 	"github.com/sebasusnik/go-trpc/pkg/codegen"
 	"github.com/sebasusnik/go-trpc/pkg/errors"
+	gotrpc "github.com/sebasusnik/go-trpc/pkg/router"
 )
 
 // ListRooms returns all available chat rooms.
@@ -146,7 +147,7 @@ func HealthCheck(ctx context.Context, _ struct{}) (HealthOutput, error) {
 	return HealthOutput{
 		Status:    "ok",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Version:   "0.4.0",
+		Version:   gotrpc.Version,
 	}, nil
 }
 

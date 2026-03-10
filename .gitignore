@@ -1,5 +1,8 @@
-# Binary
+# Binaries
 /gotrpc
+/middleware
+/timeout
+/procedure-middleware
 
 # IDE
 .idea/

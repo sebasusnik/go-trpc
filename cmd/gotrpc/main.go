@@ -18,6 +18,7 @@ func main() {
 	var outputPath string
 	var routerName string
 	var watch bool
+	var dryRun bool
 
 	rootCmd := &cobra.Command{
 		Use:     "gotrpc",
@@ -70,6 +71,7 @@ If no path argument is given, reads configuration from gotrpc.json in the curren
 				OutputPath: outputPath,
 				RouterName: routerName,
 				SourcePath: sourcePath,
+				DryRun:     dryRun,
 			}
 
 			fmt.Printf("Parsing %s...\n", sourcePath)
@@ -95,6 +97,7 @@ If no path argument is given, reads configuration from gotrpc.json in the curren
 	generateCmd.Flags().StringVarP(&outputPath, "output", "o", "", "output path for the .d.ts file")
 	generateCmd.Flags().StringVarP(&routerName, "router", "r", "", "name of the router type (default: AppRouter)")
 	generateCmd.Flags().BoolVarP(&watch, "watch", "w", false, "watch for .go file changes and regenerate")
+	generateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "print generated output to stdout without writing to disk")
 
 	rootCmd.AddCommand(generateCmd)
 	rootCmd.AddCommand(initCmd)

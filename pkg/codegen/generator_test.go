@@ -411,6 +411,45 @@ func TestGenerate_TS(t *testing.T) {
 	}
 }
 
+func TestGenerate_DryRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "should-not-exist.d.ts")
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := Generate(GenerateOptions{
+		SourcePath: "testdata/simple",
+		OutputPath: outPath,
+		DryRun:     true,
+	})
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// File should NOT have been created
+	if _, err := os.Stat(outPath); err == nil {
+		t.Error("dry-run should not create the output file")
+	}
+
+	// Output should have been written to stdout
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	output := string(buf[:n])
+	if !strings.Contains(output, "DO NOT EDIT") {
+		t.Errorf("expected generated output on stdout, got: %s", output)
+	}
+	if !strings.Contains(output, "ping:") {
+		t.Error("expected ping procedure in stdout output")
+	}
+}
+
 func TestGenerate_NoProcedures(t *testing.T) {
 	tmpDir := t.TempDir()
 

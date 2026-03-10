@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sebasusnik/go-trpc/pkg/errors"
 	"github.com/sebasusnik/go-trpc/pkg/router"
@@ -309,5 +311,41 @@ func TestMutationContentTypeEmpty(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 for empty Content-Type, got %d", resp.StatusCode)
+	}
+}
+
+func TestCancellation_QueryAbort(t *testing.T) {
+	var handlerExited atomic.Bool
+
+	r := router.NewRouter(router.WithLogger(router.NopLogger))
+	router.Query(r, "slow", func(ctx context.Context, input struct{}) (string, error) {
+		defer handlerExited.Store(true)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(10 * time.Second):
+			return "done", nil
+		}
+	})
+
+	srv := httptest.NewServer(r.Handler())
+	defer srv.Close()
+
+	// Start request with a short timeout to simulate client abort
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/trpc/slow", nil)
+	_, err := http.DefaultClient.Do(req)
+	// Request should fail due to context cancellation
+	if err == nil {
+		t.Fatal("expected error from cancelled request")
+	}
+
+	// Wait for handler to exit
+	time.Sleep(200 * time.Millisecond)
+
+	if !handlerExited.Load() {
+		t.Error("expected handler to exit after client abort")
 	}
 }

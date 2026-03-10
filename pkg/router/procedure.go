@@ -22,10 +22,22 @@ type Handler func(ctx context.Context, req Request) (interface{}, error)
 // SubscriptionHandler returns a channel that yields events until closed.
 type SubscriptionHandler func(ctx context.Context, req Request) (<-chan interface{}, error)
 
+// ProcedureOption configures a procedure at registration time.
+type ProcedureOption func(*procedure)
+
+// WithMiddleware attaches middlewares to a specific procedure.
+// These run after global middlewares set via Router.Use().
+func WithMiddleware(mws ...Middleware) ProcedureOption {
+	return func(p *procedure) {
+		p.middlewares = append(p.middlewares, mws...)
+	}
+}
+
 // procedure stores a registered tRPC procedure.
 type procedure struct {
 	Name                string
 	Type                ProcedureType
 	Handler             Handler             // for query/mutation
 	SubscriptionHandler SubscriptionHandler // for subscription
+	middlewares         []Middleware         // procedure-level middlewares
 }
