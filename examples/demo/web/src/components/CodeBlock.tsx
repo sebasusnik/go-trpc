@@ -10,7 +10,7 @@ type Props = {
 let highlighterPromise: Promise<Highlighter> | null = null;
 const loadedLangs = new Set<string>();
 
-export function getHighlighter(lang: string): Promise<Highlighter> {
+export async function getHighlighter(lang: string): Promise<Highlighter> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
       themes: ["one-dark-pro"],
@@ -20,13 +20,12 @@ export function getHighlighter(lang: string): Promise<Highlighter> {
       return h;
     });
   }
-  return highlighterPromise.then(async (h) => {
-    if (!loadedLangs.has(lang)) {
-      await h.loadLanguage(lang as Parameters<typeof h.loadLanguage>[0]);
-      loadedLangs.add(lang);
-    }
-    return h;
-  });
+  const h = await highlighterPromise;
+  if (!loadedLangs.has(lang)) {
+    await h.loadLanguage(lang as Parameters<typeof h.loadLanguage>[0]);
+    loadedLangs.add(lang);
+  }
+  return h;
 }
 
 // Simple cache: code+lang → html
@@ -71,7 +70,7 @@ export default function CodeBlock({ code, lang }: Props) {
 
   return (
     <div
-      className="[&_pre]:!bg-transparent [&_pre]:p-4 [&_pre]:text-sm [&_pre]:min-w-fit [&_code]:text-sm overflow-auto h-full"
+      className="[&_pre]:bg-transparent! [&_pre]:p-4 [&_pre]:text-sm [&_pre]:min-w-fit [&_code]:text-sm overflow-auto h-full"
       // biome-ignore lint/security/noDangerouslySetInnerHtml: required for Shiki syntax highlighting output
       dangerouslySetInnerHTML={{ __html: html }}
     />
