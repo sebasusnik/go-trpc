@@ -12,6 +12,8 @@ Write Go handlers. Generate TypeScript types. Use `@trpc/client`. Zero Protobuf.
 
 <br />
 
+<img width="1974" height="692" alt="go-trpc-production up railway app_" src="https://github.com/user-attachments/assets/5cdd0408-5d84-4321-a889-ab5dc38d1461" />
+
 ### [Try the Live Demo](https://go-trpc-production.up.railway.app/)
 
 A real-time chat app with rooms, instant messaging via SSE subscriptions, and built-in dev tools — all powered by go-trpc.
