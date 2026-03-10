@@ -14,9 +14,15 @@ type Props = {
   roomId: string;
   roomName: string;
   username: string;
+  onBack?: () => void;
 };
 
-export default function ChatRoom({ roomId, roomName, username }: Props) {
+export default function ChatRoom({
+  roomId,
+  roomName,
+  username,
+  onBack,
+}: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
@@ -96,7 +102,30 @@ export default function ChatRoom({ roomId, roomName, username }: Props) {
   return (
     <div className="flex h-full flex-col">
       {/* Room header */}
-      <div className="border-b border-zinc-200/80 px-4 py-2.5">
+      <div className="flex items-center gap-2 border-b border-zinc-200/80 px-4 py-2.5">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="md:hidden text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
+            aria-label="Back to rooms"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              role="img"
+              aria-label="Back"
+            >
+              <path d="M10 12L6 8L10 4" />
+            </svg>
+          </button>
+        )}
         <h3 className="text-sm font-medium text-zinc-700">#{roomName}</h3>
       </div>
 

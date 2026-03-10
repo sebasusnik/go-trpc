@@ -134,21 +134,30 @@ export default function App() {
         <main
           className={`flex-1 flex overflow-hidden ${mobileView !== "app" ? "hidden md:flex" : ""}`}
         >
-          {/* Room sidebar */}
-          <div className="w-56 shrink-0 border-r border-zinc-200/80 bg-white">
+          {/* Room sidebar — hidden on mobile when a room is active */}
+          <div
+            className={`w-full md:w-56 shrink-0 border-r border-zinc-200/80 bg-white ${
+              activeRoom ? "hidden md:block" : ""
+            }`}
+          >
             <RoomList
               activeRoomId={activeRoom?.id ?? null}
               onSelectRoom={setActiveRoom}
             />
           </div>
 
-          {/* Chat area */}
-          <div className="flex-1 bg-white">
+          {/* Chat area — hidden on mobile when no room is active */}
+          <div
+            className={`flex-1 bg-white ${
+              !activeRoom ? "hidden md:block" : ""
+            }`}
+          >
             {activeRoom ? (
               <ChatRoom
                 roomId={activeRoom.id}
                 roomName={activeRoom.name}
                 username={username}
+                onBack={() => setActiveRoom(null)}
               />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-zinc-300">
