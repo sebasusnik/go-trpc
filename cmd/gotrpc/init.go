@@ -16,12 +16,12 @@ var initCmd = &cobra.Command{
 	RunE:  runInit,
 }
 
-const trpcTemplate = `import { createGoTRPCClient } from "@go-trpc/client";
+const trpcTemplate = `import { createTRPCClient, httpLink } from "@trpc/client";
 import type { AppRouter } from "./generated/router";
 
-const baseUrl = "/trpc";
-
-export const trpc = createGoTRPCClient<AppRouter>({ url: baseUrl });
+export const trpc = createTRPCClient<AppRouter>({
+  links: [httpLink({ url: "/trpc" })],
+});
 `
 
 const generatedGitignore = `*
@@ -86,7 +86,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("\nNext steps:")
-	fmt.Println("  1. npm install @go-trpc/client")
+	fmt.Println("  1. npm install @trpc/client @trpc/server")
 	fmt.Println("  2. gotrpc generate")
 	fmt.Println("  3. Import { trpc } from \"./trpc\" in your components")
 
