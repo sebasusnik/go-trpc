@@ -1,3 +1,4 @@
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ChatRoom from "./components/ChatRoom";
 import CodePanel from "./components/CodePanel";
@@ -25,6 +26,7 @@ export default function App() {
   );
   const [sidebarWidth, setSidebarWidth] = useState(420);
   const [mobileView, setMobileView] = useState<"app" | "devtools">("app");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const [username] = useState(() => {
     const stored = localStorage.getItem("chat-username");
@@ -71,6 +73,18 @@ export default function App() {
       <header className="border-b border-zinc-200/80 bg-white/80 backdrop-blur-sm px-4 py-2.5 md:px-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 md:gap-3">
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed((c) => !c)}
+              className="hidden md:flex items-center justify-center h-7 w-7 rounded-md text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 transition-colors cursor-pointer"
+              aria-label={sidebarCollapsed ? "Show channels" : "Hide channels"}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen size={16} />
+              ) : (
+                <PanelLeftClose size={16} />
+              )}
+            </button>
             <h1 className="text-sm font-semibold tracking-tight">
               <span className="text-go-blue">go-trpc</span>{" "}
               <span className="text-zinc-400 font-normal">demo</span>
@@ -134,11 +148,11 @@ export default function App() {
         <main
           className={`flex-1 flex overflow-hidden ${mobileView !== "app" ? "hidden md:flex" : ""}`}
         >
-          {/* Room sidebar — hidden on mobile when a room is active */}
+          {/* Room sidebar — hidden on mobile when a room is active, collapsible on desktop */}
           <div
-            className={`w-full md:w-56 shrink-0 border-r border-zinc-200/80 bg-white ${
+            className={`w-full md:w-56 shrink-0 border-r border-zinc-200/80 bg-white transition-all duration-200 ${
               activeRoom ? "hidden md:block" : ""
-            }`}
+            } ${sidebarCollapsed ? "md:hidden" : ""}`}
           >
             <RoomList
               activeRoomId={activeRoom?.id ?? null}

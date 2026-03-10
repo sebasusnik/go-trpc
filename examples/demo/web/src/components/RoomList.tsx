@@ -1,3 +1,4 @@
+import { Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GoTRPCError, trpc } from "../trpc";
 
@@ -100,9 +101,10 @@ export default function RoomList({ activeRoomId, onSelectRoom }: Props) {
             type="button"
             onClick={handleCreate}
             disabled={!newRoomName.trim() || creating}
-            className="rounded-lg bg-go-blue px-2.5 py-1.5 text-xs font-medium text-white hover:bg-go-dark disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            className="rounded-lg bg-go-blue px-2 py-1.5 text-white hover:bg-go-dark disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            aria-label="Create room"
           >
-            +
+            <Plus size={14} />
           </button>
         </div>
       </div>

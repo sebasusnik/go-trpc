@@ -1,3 +1,4 @@
+import { ChevronLeft, Send } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { emitLog, GoTRPCError, nextLogId, trpc } from "../trpc";
 import ChatMessage from "./ChatMessage";
@@ -132,20 +133,7 @@ export default function ChatRoom({
             className="md:hidden text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
             aria-label="Back to rooms"
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              role="img"
-              aria-label="Back"
-            >
-              <path d="M10 12L6 8L10 4" />
-            </svg>
+            <ChevronLeft size={16} />
           </button>
         )}
         <h3 className="text-sm font-medium text-zinc-700">#{roomName}</h3>
@@ -204,9 +192,10 @@ export default function ChatRoom({
             type="button"
             onClick={handleSend}
             disabled={!input.trim() || sending}
-            className="rounded-xl bg-go-blue px-5 py-2.5 text-sm font-medium text-white shadow-sm shadow-go-blue/25 transition-colors hover:bg-go-dark disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            className="rounded-xl bg-go-blue px-3.5 py-2.5 text-white shadow-sm shadow-go-blue/25 transition-colors hover:bg-go-dark disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            aria-label="Send message"
           >
-            Send
+            <Send size={16} />
           </button>
         </div>
       </div>
