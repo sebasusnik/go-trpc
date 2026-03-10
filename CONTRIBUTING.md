@@ -20,9 +20,33 @@ Requirements: Go 1.25+, [golangci-lint](https://golangci-lint.run/welcome/instal
 | `make lint` | Run golangci-lint |
 | `make vet` | Run go vet |
 | `make fmt` | Format all Go files |
-| `make build` | Build the `gotrpc` CLI binary |
+| `make build` | Build the `gotrpc` CLI binary (version from git tag) |
 | `make coverage` | Generate test coverage report |
 | `make check` | **Run before PRs** — lint + vet + test-race |
+
+## CLI Commands
+
+| Command | Description |
+|---|---|
+| `gotrpc init` | Scaffold a new project — creates `gotrpc.json`, `trpc.ts` client, `generated/` dir |
+| `gotrpc init --ws` | Same, but with WebSocket support (`splitLink` + `wsLink`) |
+| `gotrpc generate` | Generate TypeScript types from Go source (reads `gotrpc.json`) |
+| `gotrpc generate ./api -o ./web/src/generated/router.d.ts` | Generate with explicit paths |
+| `gotrpc generate --watch` | Watch for `.go` file changes and regenerate |
+| `gotrpc generate --dry-run` | Preview output without writing to disk |
+
+### `gotrpc init`
+
+Auto-detects your project structure and scaffolds the TypeScript client setup:
+
+1. **Detects Go source** — looks for `api/`, `server/`, `backend/`, `cmd/` directories
+2. **Detects web directory** — looks for `web/`, `frontend/`, `client/`, `app/` with a `package.json`
+3. **Detects `src/` layout** — places files in `src/` if it exists, otherwise directly in the web dir
+4. **Creates:**
+   - `gotrpc.json` — config with source, output, and router name
+   - `{webDir}/[src/]generated/.gitignore` — keeps generated files out of git
+   - `{webDir}/[src/]trpc.ts` — tRPC client with `httpLink` (or `splitLink` + `wsLink` with `--ws`)
+5. **Skips existing files** — safe to run multiple times
 
 ## Project Structure
 
@@ -132,6 +156,17 @@ For subscriptions, middlewares run as a "gate" before the subscription handler �
 2. Implement a function that takes `*router.Router` and adapts it to the target platform
 3. Add tests
 4. Add an example in `examples/`
+
+### Versioning
+
+Version is derived automatically — no manual edits needed:
+
+- **`make build`** injects version from `git describe --tags` via ldflags
+- **`go install ...@v0.5.0`** reads version from `runtime/debug.ReadBuildInfo()`
+- **Library consumers** get the module version from build info deps
+- **To release:** just tag and push — `git tag v0.6.0 && git push origin v0.6.0`
+
+The single source of truth is `pkg/router.Version` (a `var`, not a `const`).
 
 ## Pull Requests
 

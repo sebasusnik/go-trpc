@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -11,7 +12,33 @@ import (
 )
 
 // Version is the current version of go-trpc.
-const Version = "0.5.0"
+// It is set automatically from build info (go install / go get) or
+// overridden via ldflags: -X github.com/sebasusnik/go-trpc/pkg/router.Version=v1.0.0
+var Version = "dev"
+
+func init() {
+	if Version != "dev" {
+		return
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	// When used as the main module (e.g. go run ./cmd/gotrpc)
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		Version = v
+		return
+	}
+	// When imported as a dependency
+	for _, dep := range info.Deps {
+		if dep.Path == "github.com/sebasusnik/go-trpc" {
+			if dep.Version != "" {
+				Version = dep.Version
+			}
+			return
+		}
+	}
+}
 
 // Router is the main tRPC router that holds procedures and middlewares.
 type Router struct {

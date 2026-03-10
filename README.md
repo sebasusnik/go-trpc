@@ -86,6 +86,13 @@ go get github.com/sebasusnik/go-trpc
 go install github.com/sebasusnik/go-trpc/cmd/gotrpc@latest
 ```
 
+### Scaffold a Project
+
+```bash
+gotrpc init          # creates gotrpc.json, trpc.ts client, generated/ dir
+gotrpc init --ws     # same, but with WebSocket (splitLink + wsLink) setup
+```
+
 ### Server (Go)
 
 ```go

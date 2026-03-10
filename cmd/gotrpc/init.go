@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -16,17 +17,47 @@ var initCmd = &cobra.Command{
 	RunE:  runInit,
 }
 
-const trpcTemplate = `import { createTRPCClient, httpLink } from "@trpc/client";
-import type { AppRouter } from "./generated/router";
-
-export const trpc = createTRPCClient<AppRouter>({
-  links: [httpLink({ url: "/trpc" })],
-});
-`
+func init() {
+	initCmd.Flags().Bool("ws", false, "scaffold with WebSocket support (splitLink + wsLink for subscriptions)")
+}
 
 const generatedGitignore = `*
 !.gitignore
 `
+
+func trpcHTTPTemplate(routerName string) string {
+	return fmt.Sprintf(`import { createTRPCClient, httpLink } from "@trpc/client";
+import type { %s } from "./generated/router";
+
+export const trpc = createTRPCClient<%s>({
+  links: [httpLink({ url: "/trpc" })],
+});
+`, routerName, routerName)
+}
+
+func trpcWSTemplate(routerName string) string {
+	return fmt.Sprintf(`import {
+  createTRPCClient,
+  httpLink,
+  splitLink,
+  wsLink,
+} from "@trpc/client";
+import type { %s } from "./generated/router";
+
+const url = window.location.origin + "/trpc";
+const wsUrl = url.replace(/^http/, "ws");
+
+export const trpc = createTRPCClient<%s>({
+  links: [
+    splitLink({
+      condition: (op) => op.type === "subscription",
+      true: wsLink({ url: wsUrl }),
+      false: httpLink({ url }),
+    }),
+  ],
+});
+`, routerName, routerName)
+}
 
 func runInit(cmd *cobra.Command, args []string) error {
 	cwd, err := os.Getwd()
@@ -34,13 +65,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	useWS, _ := cmd.Flags().GetBool("ws")
+
 	// Detect project structure
 	source := detectGoSource(cwd)
 	webDir := detectWebDir(cwd)
+	srcDir := detectSrcDir(cwd, webDir)
 
 	cfg := GoTRPCConfig{
 		Source: "./" + source,
-		Output: "./" + filepath.Join(webDir, "src/generated/router.d.ts"),
+		Output: "./" + filepath.Join(webDir, srcDir, "generated/router.d.ts"),
 		Router: "AppRouter",
 	}
 
@@ -61,7 +95,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create generated directory with .gitignore
-	generatedDir := filepath.Join(cwd, webDir, "src/generated")
+	generatedDir := filepath.Join(cwd, webDir, srcDir, "generated")
 	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create generated dir: %w", err)
 	}
@@ -71,24 +105,31 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err := os.WriteFile(gitignorePath, []byte(generatedGitignore), 0o644); err != nil {
 			return fmt.Errorf("failed to write .gitignore: %w", err)
 		}
-		fmt.Printf("Created %s\n", filepath.Join(webDir, "src/generated/.gitignore"))
+		fmt.Printf("Created %s\n", filepath.Join(webDir, srcDir, "generated/.gitignore"))
 	}
 
 	// Create trpc.ts if it doesn't exist
-	trpcPath := filepath.Join(cwd, webDir, "src/trpc.ts")
+	trpcPath := filepath.Join(cwd, webDir, srcDir, "trpc.ts")
+	relTrpcPath := filepath.Join(webDir, srcDir, "trpc.ts")
 	if _, err := os.Stat(trpcPath); err == nil {
-		fmt.Printf("%s already exists, skipping\n", filepath.Join(webDir, "src/trpc.ts"))
+		fmt.Printf("%s already exists, skipping\n", relTrpcPath)
 	} else {
-		if err := os.WriteFile(trpcPath, []byte(trpcTemplate), 0o644); err != nil {
+		var template string
+		if useWS {
+			template = trpcWSTemplate(cfg.Router)
+		} else {
+			template = trpcHTTPTemplate(cfg.Router)
+		}
+		if err := os.WriteFile(trpcPath, []byte(template), 0o644); err != nil {
 			return fmt.Errorf("failed to write trpc.ts: %w", err)
 		}
-		fmt.Printf("Created %s\n", filepath.Join(webDir, "src/trpc.ts"))
+		fmt.Printf("Created %s\n", relTrpcPath)
 	}
 
 	fmt.Println("\nNext steps:")
 	fmt.Println("  1. npm install @trpc/client @trpc/server")
 	fmt.Println("  2. gotrpc generate")
-	fmt.Println("  3. Import { trpc } from \"./trpc\" in your components")
+	fmt.Printf("  3. Import { trpc } from \"./%s\" in your components\n", strings.TrimSuffix(filepath.Base(relTrpcPath), ".ts"))
 
 	return nil
 }
@@ -121,4 +162,13 @@ func detectWebDir(dir string) string {
 		}
 	}
 	return "web"
+}
+
+// detectSrcDir checks if the web directory uses a src/ subdirectory.
+func detectSrcDir(projectDir, webDir string) string {
+	srcPath := filepath.Join(projectDir, webDir, "src")
+	if info, err := os.Stat(srcPath); err == nil && info.IsDir() {
+		return "src"
+	}
+	return ""
 }
