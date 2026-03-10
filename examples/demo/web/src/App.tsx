@@ -66,7 +66,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-100 text-zinc-900">
+    <div className="flex h-dvh flex-col bg-zinc-100 text-zinc-900">
       {/* Header */}
       <header className="border-b border-zinc-200/80 bg-white/80 backdrop-blur-sm px-4 py-2.5 md:px-6">
         <div className="flex items-center justify-between">

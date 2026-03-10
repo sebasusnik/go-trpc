@@ -163,7 +163,7 @@ export default function ChatRoom({
       )}
 
       {/* Input */}
-      <div className="border-t border-zinc-200/80 p-3">
+      <div className="border-t border-zinc-200/80 p-3 pb-[calc(0.75rem+env(keyboard-inset-bottom,0px))]">
         <div className="flex gap-3">
           <input
             type="text"
