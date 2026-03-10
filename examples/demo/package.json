@@ -1,0 +1,10 @@
+{
+  "name": "go-trpc-demo",
+  "private": true,
+  "workspaces": ["web"],
+  "scripts": {
+    "dev": "make dev",
+    "generate": "make generate",
+    "build": "make build"
+  }
+}

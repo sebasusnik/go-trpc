@@ -1,0 +1,5 @@
+{
+  "source": "./api",
+  "output": "./web/src/generated/router.d.ts",
+  "router": "AppRouter"
+}

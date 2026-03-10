@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+@theme {
+  --color-go-blue: #00ADD8;
+  --color-go-dark: #00758D;
+  --color-trpc-blue: #398CCB;
+  --color-ts-blue: #3178C6;
+}
+
+/* Code block styling */
+.code-block {
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", monospace;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+/* Request log entry animation */
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.log-entry {
+  animation: slide-in 0.2s ease-out;
+}
+
+/* Chat message animation */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.chat-message {
+  animation: fade-in 0.15s ease-out;
+}

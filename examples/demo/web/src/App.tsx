@@ -1,0 +1,229 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import ChatRoom from "./components/ChatRoom";
+import CodePanel from "./components/CodePanel";
+import RequestLog from "./components/RequestLog";
+import RoomList from "./components/RoomList";
+import TypePlayground from "./components/TypePlayground";
+import { trpc } from "./trpc";
+
+type HealthStatus = {
+  status: string;
+  timestamp: string;
+  version: string;
+} | null;
+
+type Room = {
+  id: string;
+  name: string;
+  createdAt: string;
+};
+
+export default function App() {
+  const [health, setHealth] = useState<HealthStatus>(null);
+  const [bottomPanel, setBottomPanel] = useState<"log" | "code" | "playground">("log");
+  const [sidebarWidth, setSidebarWidth] = useState(420);
+  const [mobileView, setMobileView] = useState<"app" | "devtools">("app");
+  const [activeRoom, setActiveRoom] = useState<Room | null>(null);
+  const [username] = useState(() => {
+    const stored = localStorage.getItem("chat-username");
+    if (stored) return stored;
+    const name = `user-${Math.random().toString(36).slice(2, 6)}`;
+    localStorage.setItem("chat-username", name);
+    return name;
+  });
+  const isDragging = useRef(false);
+
+  const handleMouseDown = useCallback(() => {
+    isDragging.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const newWidth = window.innerWidth - e.clientX;
+      setSidebarWidth(Math.min(700, Math.max(280, newWidth)));
+    };
+
+    const handleMouseUp = () => {
+      isDragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  }, []);
+
+  useEffect(() => {
+    trpc.health.check
+      .query()
+      .then(setHealth)
+      .catch(() => setHealth(null));
+  }, []);
+
+  return (
+    <div className="flex h-screen flex-col bg-zinc-50 text-zinc-900">
+      {/* Header */}
+      <header className="border-b border-zinc-200 bg-white px-4 py-3 md:px-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 md:gap-3">
+            <h1 className="text-lg font-bold tracking-tight">
+              <span className="text-go-blue">go-trpc</span>{" "}
+              <span className="text-zinc-400 font-normal">demo</span>
+            </h1>
+            <span className="hidden sm:inline rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs text-zinc-500">
+              Chat Rooms
+            </span>
+            <span className="hidden sm:inline rounded-full bg-go-blue/10 px-2.5 py-0.5 text-xs text-go-blue font-medium">
+              {username}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 md:gap-4 text-xs">
+            {/* Mobile view toggle */}
+            <div className="flex md:hidden rounded-lg bg-zinc-100 p-0.5">
+              <button
+                type="button"
+                onClick={() => setMobileView("app")}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors cursor-pointer ${
+                  mobileView === "app"
+                    ? "bg-white text-zinc-900 shadow-sm"
+                    : "text-zinc-500"
+                }`}
+              >
+                Chat
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileView("devtools")}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors cursor-pointer ${
+                  mobileView === "devtools"
+                    ? "bg-white text-zinc-900 shadow-sm"
+                    : "text-zinc-500"
+                }`}
+              >
+                Dev Tools
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div
+                className={`h-2 w-2 rounded-full ${health ? "bg-emerald-500" : "bg-red-500"}`}
+              />
+              <span className="text-zinc-500">
+                {health ? `API v${health.version}` : "API offline"}
+              </span>
+            </div>
+            <a
+              href="https://github.com/sebasusnik/go-trpc"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-zinc-400 hover:text-zinc-700 transition-colors"
+            >
+              GitHub
+            </a>
+          </div>
+        </div>
+      </header>
+
+      {/* Main content */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left panel — Room list + Chat */}
+        <main className={`flex-1 flex overflow-hidden ${mobileView !== "app" ? "hidden md:flex" : ""}`}>
+          {/* Room sidebar */}
+          <div className="w-48 shrink-0 border-r border-zinc-200 bg-white">
+            <RoomList
+              activeRoomId={activeRoom?.id ?? null}
+              onSelectRoom={setActiveRoom}
+            />
+          </div>
+
+          {/* Chat area */}
+          <div className="flex-1 bg-white">
+            {activeRoom ? (
+              <ChatRoom
+                roomId={activeRoom.id}
+                roomName={activeRoom.name}
+                username={username}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-zinc-400">
+                Select a room to start chatting
+              </div>
+            )}
+          </div>
+        </main>
+
+        {/* Drag handle — desktop only */}
+        {/* biome-ignore lint/a11y/useSemanticElements: interactive resize handle, not a static separator */}
+        <div
+          role="separator"
+          tabIndex={0}
+          aria-label="Resize panels"
+          aria-valuenow={sidebarWidth}
+          onMouseDown={handleMouseDown}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft")
+              setSidebarWidth((w) => Math.min(700, w + 20));
+            if (e.key === "ArrowRight")
+              setSidebarWidth((w) => Math.max(280, w - 20));
+          }}
+          className="hidden md:block w-1 cursor-col-resize bg-zinc-200 hover:bg-zinc-400 active:bg-zinc-500 transition-colors"
+        />
+
+        {/* Right panel — Request Log / Code */}
+        <aside
+          className={`flex min-w-0 flex-col border-l border-zinc-200 bg-white ${
+            mobileView !== "devtools" ? "hidden md:flex" : "flex-1"
+          } md:flex`}
+          style={{ width: mobileView === "devtools" ? undefined : sidebarWidth }}
+        >
+          <div className="flex border-b border-zinc-200">
+            <button
+              type="button"
+              onClick={() => setBottomPanel("log")}
+              className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
+                bottomPanel === "log"
+                  ? "border-b-2 border-zinc-900 text-zinc-900"
+                  : "text-zinc-400 hover:text-zinc-600"
+              }`}
+            >
+              Request Log
+            </button>
+            <button
+              type="button"
+              onClick={() => setBottomPanel("code")}
+              className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
+                bottomPanel === "code"
+                  ? "border-b-2 border-zinc-900 text-zinc-900"
+                  : "text-zinc-400 hover:text-zinc-600"
+              }`}
+            >
+              Source Code
+            </button>
+            <button
+              type="button"
+              onClick={() => setBottomPanel("playground")}
+              className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
+                bottomPanel === "playground"
+                  ? "border-b-2 border-go-blue text-go-blue"
+                  : "text-zinc-400 hover:text-zinc-600"
+              }`}
+            >
+              Playground
+            </button>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            {bottomPanel === "log" ? (
+              <RequestLog />
+            ) : bottomPanel === "code" ? (
+              <CodePanel />
+            ) : (
+              <TypePlayground />
+            )}
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
