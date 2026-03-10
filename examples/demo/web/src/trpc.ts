@@ -46,7 +46,7 @@ export const trpc = createTRPCClient<AppRouter>({
       url: baseUrl,
       async fetch(url, options) {
         const method = (options?.method ?? "GET") as "GET" | "POST";
-        const path = new URL(url.toString()).pathname.replace(/.*\/trpc\//, "");
+        const path = new URL(url.toString(), window.location.origin).pathname.replace(/.*\/trpc\//, "");
         const start = performance.now();
 
         const res = await globalThis.fetch(url, options);
