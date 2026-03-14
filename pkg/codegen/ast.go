@@ -20,6 +20,7 @@ type ProcedureInfo struct {
 	InputType  types.Type
 	OutputType types.Type
 	RouterVar  string // variable name of the router this is registered on
+	PkgPath    string // package path where this procedure is defined (for cross-package resolution)
 
 	// AST-only fields (used when type checking is unavailable)
 	InputTypeName  string // Go type expression as string (e.g., "ListTasksInput")
@@ -55,13 +56,22 @@ type StructDef struct {
 	Fields []StructField
 }
 
+// RouterFactoryCall tracks when a function returning *Router is called and
+// its result is assigned to a local variable. This connects procedures from
+// sub-packages to the caller's variable name for correct namespace resolution.
+type RouterFactoryCall struct {
+	LocalVar       string // caller's variable name (e.g., "authRouter")
+	FactoryPkgPath string // package path of the factory (e.g., "github.com/user/app/auth")
+}
+
 // ParseResult holds the result of parsing Go source for tRPC procedures.
 type ParseResult struct {
-	Procedures []ProcedureInfo
-	Merges     []MergeInfo
-	Enums      []EnumInfo
-	StructDefs []StructDef
-	RouterVar  string // name of the router variable (e.g., "appRouter")
+	Procedures   []ProcedureInfo
+	Merges       []MergeInfo
+	Enums        []EnumInfo
+	StructDefs   []StructDef
+	FactoryCalls []RouterFactoryCall
+	RouterVar    string // name of the router variable (e.g., "appRouter")
 }
 
 // ParsePackage parses Go source files in the given directory pattern and extracts tRPC procedure registrations.
@@ -97,8 +107,13 @@ func ParsePackage(pattern string, routerVar string) (*ParseResult, error) {
 
 		for _, file := range pkg.Syntax {
 			extracted := extractFromFile(file, pkg.TypesInfo)
+			// Set PkgPath on procedures from this package
+			for i := range extracted.Procedures {
+				extracted.Procedures[i].PkgPath = pkg.PkgPath
+			}
 			result.Procedures = append(result.Procedures, extracted.Procedures...)
 			result.Merges = append(result.Merges, extracted.Merges...)
+			result.FactoryCalls = append(result.FactoryCalls, extracted.FactoryCalls...)
 		}
 
 		// Extract enum patterns from the package
@@ -133,8 +148,13 @@ func ParseDir(dir string) (*ParseResult, error) {
 		for _, pkg := range pkgs {
 			for _, file := range pkg.Files {
 				extracted := extractFromFileAST(file)
+				// Set PkgPath from package name (best we can do without type checker)
+				for i := range extracted.Procedures {
+					extracted.Procedures[i].PkgPath = pkg.Name
+				}
 				result.Procedures = append(result.Procedures, extracted.Procedures...)
 				result.Merges = append(result.Merges, extracted.Merges...)
+				result.FactoryCalls = append(result.FactoryCalls, extracted.FactoryCalls...)
 				result.Enums = append(result.Enums, extractEnumsFromAST(file)...)
 				result.StructDefs = append(result.StructDefs, extractStructDefsFromAST(file)...)
 			}
@@ -152,8 +172,9 @@ func ParseDir(dir string) (*ParseResult, error) {
 
 // fileExtractionResult holds procedures and merges extracted from a single file.
 type fileExtractionResult struct {
-	Procedures []ProcedureInfo
-	Merges     []MergeInfo
+	Procedures   []ProcedureInfo
+	Merges       []MergeInfo
+	FactoryCalls []RouterFactoryCall
 }
 
 // exprToVarName extracts a variable name from an expression.
@@ -173,7 +194,21 @@ func resolvePrefixes(result *ParseResult) {
 		return
 	}
 
-	// Build map: childVar -> (parentVar, prefix)
+	// Step 1: Remap RouterVar based on factory calls (cross-package resolution).
+	// When we see `authRouter := auth.NewRouter(...)` and procedures from the
+	// "auth" package have RouterVar "r", remap them to "authRouter" so the
+	// merge chain can connect them.
+	if len(result.FactoryCalls) > 0 {
+		for i, proc := range result.Procedures {
+			for _, fc := range result.FactoryCalls {
+				if proc.PkgPath != "" && proc.PkgPath == fc.FactoryPkgPath {
+					result.Procedures[i].RouterVar = fc.LocalVar
+				}
+			}
+		}
+	}
+
+	// Step 2: Build map: childVar -> (parentVar, prefix)
 	// A child router may be merged into a parent with a prefix.
 	type mergeEntry struct {
 		parentVar string
@@ -184,7 +219,7 @@ func resolvePrefixes(result *ParseResult) {
 		mergeMap[m.ChildVar] = mergeEntry{parentVar: m.ParentVar, prefix: m.Prefix}
 	}
 
-	// For each procedure, walk up the merge chain to build the full prefix.
+	// Step 3: For each procedure, walk up the merge chain to build the full prefix.
 	for i, proc := range result.Procedures {
 		if proc.RouterVar == "" {
 			continue

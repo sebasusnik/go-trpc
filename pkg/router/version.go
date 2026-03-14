@@ -3,7 +3,7 @@ package router
 import "runtime/debug"
 
 // version is the embedded version of go-trpc, updated at each release.
-const version = "0.5.1"
+const version = "0.5.3"
 
 // Version is the current version of go-trpc.
 // Resolution order:

@@ -12,6 +12,12 @@ func extractFromFile(file *ast.File, info *types.Info) fileExtractionResult {
 	var result fileExtractionResult
 
 	ast.Inspect(file, func(n ast.Node) bool {
+		// Detect router factory assignments: x := pkg.Func(...)
+		if assign, ok := n.(*ast.AssignStmt); ok {
+			extractFactoryCallsTyped(assign, info, &result)
+			return true
+		}
+
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -132,7 +138,16 @@ func extractFromFileAST(file *ast.File) fileExtractionResult {
 		}
 	}
 
+	// Build import map for factory call detection
+	imports := extractImports(file)
+
 	ast.Inspect(file, func(n ast.Node) bool {
+		// Detect router factory assignments
+		if assign, ok := n.(*ast.AssignStmt); ok {
+			extractFactoryCallsAST(assign, imports, &result)
+			return true
+		}
+
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -351,4 +366,132 @@ func extractTypesFromFuncLit(fn *ast.FuncLit, info *types.Info) (input, output t
 	}
 
 	return input, output
+}
+
+// extractFactoryCallsTyped detects assignments like `x := pkg.Func(...)` where
+// the result type is *Router, using the type checker for precise matching.
+func extractFactoryCallsTyped(assign *ast.AssignStmt, info *types.Info, result *fileExtractionResult) {
+	if info == nil {
+		return
+	}
+	for i, rhs := range assign.Rhs {
+		call, ok := rhs.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		// Check if the result type is *Router
+		tv, ok := info.Types[call]
+		if !ok {
+			continue
+		}
+		ptr, ok := tv.Type.(*types.Pointer)
+		if !ok {
+			continue
+		}
+		named, ok := ptr.Elem().(*types.Named)
+		if !ok {
+			continue
+		}
+		if named.Obj().Name() != "Router" {
+			continue
+		}
+		// Must be go-trpc's Router, not some other Router
+		if named.Obj().Pkg() == nil || !strings.Contains(named.Obj().Pkg().Path(), "go-trpc") {
+			continue
+		}
+		if i >= len(assign.Lhs) {
+			continue
+		}
+		localVar := exprToVarName(assign.Lhs[i])
+		if localVar == "" {
+			continue
+		}
+		// Get the factory's package path from the call expression
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			continue // local call (e.g., gotrpc.NewRouter()), skip
+		}
+		pkgIdent, ok := sel.X.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		use, ok := info.Uses[pkgIdent]
+		if !ok {
+			continue
+		}
+		pkgName, ok := use.(*types.PkgName)
+		if !ok {
+			continue
+		}
+		factoryPkg := pkgName.Imported().Path()
+		// Skip go-trpc itself (gotrpc.NewRouter() is not a factory)
+		if strings.Contains(factoryPkg, "go-trpc") {
+			continue
+		}
+		result.FactoryCalls = append(result.FactoryCalls, RouterFactoryCall{
+			LocalVar:       localVar,
+			FactoryPkgPath: factoryPkg,
+		})
+	}
+}
+
+// extractFactoryCallsAST detects router factory assignments without type info.
+// Uses heuristics: looks for `x := pkg.SomeFunc(...)` where pkg is an imported package.
+func extractFactoryCallsAST(assign *ast.AssignStmt, imports map[string]string, result *fileExtractionResult) {
+	for i, rhs := range assign.Rhs {
+		call, ok := rhs.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+		pkgIdent, ok := sel.X.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		// Look up the import path for this alias
+		importPath, ok := imports[pkgIdent.Name]
+		if !ok {
+			continue
+		}
+		// Skip go-trpc itself
+		if strings.Contains(importPath, "go-trpc") {
+			continue
+		}
+		if i >= len(assign.Lhs) {
+			continue
+		}
+		localVar := exprToVarName(assign.Lhs[i])
+		if localVar == "" {
+			continue
+		}
+		// Use the package name (last segment of import path) as the factory pkg path
+		// to match against procedures' PkgPath (which is set to pkg.Name in ParseDir)
+		parts := strings.Split(importPath, "/")
+		pkgName := parts[len(parts)-1]
+		result.FactoryCalls = append(result.FactoryCalls, RouterFactoryCall{
+			LocalVar:       localVar,
+			FactoryPkgPath: pkgName,
+		})
+	}
+}
+
+// extractImports builds a map from import alias to import path for a file.
+func extractImports(file *ast.File) map[string]string {
+	imports := make(map[string]string)
+	for _, imp := range file.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		var alias string
+		if imp.Name != nil {
+			alias = imp.Name.Name
+		} else {
+			// Default alias is the last segment of the import path
+			parts := strings.Split(path, "/")
+			alias = parts[len(parts)-1]
+		}
+		imports[alias] = path
+	}
+	return imports
 }
