@@ -74,15 +74,18 @@ func (r *Router) handleSubscription(w http.ResponseWriter, req *http.Request, pa
 
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+
+	// Send "connected" event (expected by tRPC httpSubscriptionLink)
+	_, _ = fmt.Fprintf(w, "event: connected\ndata: {}\n\n")
 	flusher.Flush()
 
 	r.logger.Debug("subscription %s started", path)
 
 	// Stream events
-	eventID := 0
 	for {
 		select {
 		case <-req.Context().Done():
@@ -90,8 +93,9 @@ func (r *Router) handleSubscription(w http.ResponseWriter, req *http.Request, pa
 			return
 		case val, ok := <-ch:
 			if !ok {
-				// Channel closed — send stopped event
-				if _, err := fmt.Fprintf(w, "event: stopped\ndata: \n\n"); err != nil {
+				// Channel closed — send "return" event for clean close
+				// (tRPC client closes EventSource without reconnecting)
+				if _, err := fmt.Fprintf(w, "event: return\ndata: \n\n"); err != nil {
 					r.logger.Debug("subscription %s write error: %v", path, err)
 					return
 				}
@@ -100,27 +104,27 @@ func (r *Router) handleSubscription(w http.ResponseWriter, req *http.Request, pa
 				return
 			}
 
-			// Check if the value is a TrackedEvent for custom event IDs
-			var eventData interface{}
-			var id string
+			// TrackedEvent: sends SSE "id:" field so tRPC client uses
+			// tracked() semantics (resume from last event ID).
+			// Regular values: no "id:" field, uses non-tracked path.
+			var line string
 			if tracked, isTracked := val.(TrackedEvent); isTracked {
-				eventData = tracked.Data
-				id = tracked.ID
+				data, err := json.Marshal(tracked.Data)
+				if err != nil {
+					r.logger.Error("subscription %s marshal error: %v", path, err)
+					continue
+				}
+				line = fmt.Sprintf("id: %s\ndata: %s\n\n", tracked.ID, data)
 			} else {
-				eventData = val
-				id = fmt.Sprintf("%d", eventID)
-				eventID++
+				data, err := json.Marshal(val)
+				if err != nil {
+					r.logger.Error("subscription %s marshal error: %v", path, err)
+					continue
+				}
+				line = fmt.Sprintf("data: %s\n\n", data)
 			}
 
-			data, err := json.Marshal(trpcResult{
-				Result: &trpcData{Data: eventData},
-			})
-			if err != nil {
-				r.logger.Error("subscription %s marshal error: %v", path, err)
-				continue
-			}
-
-			if _, err := fmt.Fprintf(w, "id: %s\nevent: data\ndata: %s\n\n", id, data); err != nil {
+			if _, err := fmt.Fprint(w, line); err != nil {
 				r.logger.Debug("subscription %s write error: %v", path, err)
 				return
 			}

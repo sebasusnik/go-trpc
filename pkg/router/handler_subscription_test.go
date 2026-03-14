@@ -45,18 +45,15 @@ func TestSubscriptionSSE(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	content := string(body)
 
-	// Should contain 3 data events and a stopped event
-	if !strings.Contains(content, "event: data") {
-		t.Error("expected 'event: data' in SSE stream")
+	// Should contain 3 data events and a return event
+	if !strings.Contains(content, "data: 0") {
+		t.Errorf("expected first event with data 0, got:\n%s", content)
 	}
-	if !strings.Contains(content, "event: stopped") {
-		t.Error("expected 'event: stopped' in SSE stream")
+	if !strings.Contains(content, "data: 2") {
+		t.Errorf("expected last event with data 2, got:\n%s", content)
 	}
-	if !strings.Contains(content, `"data":0`) {
-		t.Error("expected first event with data 0")
-	}
-	if !strings.Contains(content, `"data":2`) {
-		t.Error("expected last event with data 2")
+	if !strings.Contains(content, "event: return") {
+		t.Errorf("expected 'event: return' in SSE stream, got:\n%s", content)
 	}
 }
 
@@ -89,11 +86,11 @@ func TestSubscriptionWithInput(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	content := string(body)
 
-	if !strings.Contains(content, `"data":1`) {
-		t.Error("expected event with data 1")
+	if !strings.Contains(content, "data: 1") {
+		t.Errorf("expected event with data 1, got:\n%s", content)
 	}
-	if !strings.Contains(content, `"data":2`) {
-		t.Error("expected event with data 2")
+	if !strings.Contains(content, "data: 2") {
+		t.Errorf("expected event with data 2, got:\n%s", content)
 	}
 }
 
@@ -174,8 +171,8 @@ func TestSubscriptionNestedRouter(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	content := string(body)
 
-	if !strings.Contains(content, `"data":"hello"`) {
-		t.Error("expected event with data 'hello'")
+	if !strings.Contains(content, `data: "hello"`) {
+		t.Errorf("expected event with data 'hello', got:\n%s", content)
 	}
 }
 
@@ -210,11 +207,11 @@ func TestSubscriptionTrackedEvents(t *testing.T) {
 	if !strings.Contains(content, "id: msg-2") {
 		t.Error("expected tracked event id 'msg-2'")
 	}
-	if !strings.Contains(content, `"data":"hello"`) {
-		t.Error("expected data 'hello'")
+	if !strings.Contains(content, `data: "hello"`) {
+		t.Errorf("expected data 'hello', got:\n%s", content)
 	}
-	if !strings.Contains(content, `"data":"world"`) {
-		t.Error("expected data 'world'")
+	if !strings.Contains(content, `data: "world"`) {
+		t.Errorf("expected data 'world', got:\n%s", content)
 	}
 }
 
@@ -243,14 +240,15 @@ func TestSubscriptionMixedTrackedAndUntracked(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	content := string(body)
 
-	if !strings.Contains(content, "id: 0") {
-		t.Error("expected auto-incremented id '0' for untracked event")
+	// Untracked events have no "id:" field, tracked events do
+	if !strings.Contains(content, `data: "plain"`) {
+		t.Errorf("expected untracked event 'plain', got:\n%s", content)
 	}
 	if !strings.Contains(content, "id: custom-1") {
-		t.Error("expected tracked event id 'custom-1'")
+		t.Errorf("expected tracked event id 'custom-1', got:\n%s", content)
 	}
-	if !strings.Contains(content, "id: 1") {
-		t.Error("expected auto-incremented id '1' for second untracked event")
+	if !strings.Contains(content, `data: "plain2"`) {
+		t.Errorf("expected untracked event 'plain2', got:\n%s", content)
 	}
 }
 
@@ -282,8 +280,9 @@ func TestSubscriptionLastEventID(t *testing.T) {
 	content := string(body)
 
 	// The handler should have received "msg-42" as the last event ID
-	if !strings.Contains(content, `"data":"msg-42"`) {
-		t.Errorf("expected handler to receive Last-Event-ID 'msg-42', got: %s", content)
+	// TrackedEvent data is JSON-marshaled, so the string appears quoted
+	if !strings.Contains(content, `data: "msg-42"`) {
+		t.Errorf("expected handler to receive Last-Event-ID 'msg-42', got:\n%s", content)
 	}
 }
 
