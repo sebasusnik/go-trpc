@@ -6,6 +6,14 @@ import (
 	"strings"
 )
 
+// CORSConfig holds CORS configuration.
+type CORSConfig struct {
+	AllowedOrigins []string
+	AllowedMethods []string
+	AllowedHeaders []string
+	MaxAge         int
+}
+
 func (r *Router) writeCORSHeaders(w http.ResponseWriter, req *http.Request) {
 	if r.corsConfig == nil {
 		return

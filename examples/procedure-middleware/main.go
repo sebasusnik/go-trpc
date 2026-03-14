@@ -123,7 +123,7 @@ func main() {
 		AllowedOrigins: []string{"*"},
 	})
 
-	r.PrintRoutes("/trpc")
+	r.PrintRoutes("/trpc", ":8080")
 	fmt.Println("Server listening on :8080")
 	srv := nethttp.NewServer(r, nethttp.Config{Addr: ":8080"})
 	log.Fatal(srv.Start())

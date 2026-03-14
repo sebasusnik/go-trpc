@@ -12,6 +12,10 @@ Write Go handlers. Generate TypeScript types. Use `@trpc/client`. Zero Protobuf.
 
 <br />
 
+<img src="./assets/demo.gif" alt="go-trpc in action" width="960" />
+
+<br />
+
 <a href="https://go-trpc-production.up.railway.app/">
 <img width="1974" height="692" alt="go-trpc demo" src="./assets/demo-screenshot.png" />
 </a>

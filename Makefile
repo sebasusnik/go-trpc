@@ -30,5 +30,12 @@ check: lint vet test-race
 setup:
 	git config core.hooksPath .githooks
 
+demo: build
+	@rm -rf /tmp/myapp && mkdir -p /tmp/myapp
+	@mkdir -p /tmp/gotrpc-bin && cp gotrpc /tmp/gotrpc-bin/gotrpc
+	@cd /tmp/myapp && go mod init myapp > /dev/null 2>&1 && go mod edit -require github.com/sebasusnik/go-trpc@v0.0.0 -replace github.com/sebasusnik/go-trpc=$(CURDIR)
+	@printf "import type { AppRouter } from './generated/router';\n\nconst trpc = createTRPCClient<AppRouter>({ url: '/trpc' });\n\nconst user = await trpc.getUser.query({ id: '1' });\n//    ^? { id: string; name: string; email: string }\n" > /tmp/gotrpc-demo.ts
+	vhs demo.tape
+
 clean:
 	rm -f gotrpc coverage.out

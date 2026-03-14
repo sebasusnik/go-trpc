@@ -29,10 +29,29 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Extract procedure path by stripping the basePath prefix
+	// Extract procedure path by stripping the basePath prefix.
+	// Some ServeMux implementations (Go 1.22+) may strip the prefix
+	// before dispatching, so handle both cases.
 	prefix := r.basePath + "/"
 	path := strings.TrimPrefix(req.URL.Path, prefix)
-	if path == "" || path == req.URL.Path {
+	if path == req.URL.Path {
+		// Prefix wasn't present — the mux likely already stripped it
+		path = strings.TrimPrefix(req.URL.Path, "/")
+	}
+
+	// Serve built-in panel UI at basePath/panel
+	if !r.disablePanel {
+		if path == "panel" || strings.HasPrefix(path, "panel/") || path == "panel/" {
+			r.servePanel(w, req)
+			return
+		}
+		if path == "" {
+			http.Redirect(w, req, r.basePath+"/panel", http.StatusTemporaryRedirect)
+			return
+		}
+	}
+
+	if path == "" {
 		r.writeErrorResponse(w, trpcerrors.ErrMethodNotFound, "invalid trpc path", http.StatusNotFound, "")
 		return
 	}

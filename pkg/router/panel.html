@@ -1,0 +1,1145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>go-trpc panel</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Syne:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      :root {
+        --bg: #0a0b0d;
+        --surface: #111318;
+        --surface2: #161820;
+        --border: #1e2128;
+        --border2: #2d3140;
+        --text: #e2e4ea;
+        --muted: #4a5060;
+        --accent: #00d9a3;
+        --accent2: #4d9fff;
+        --warn: #f59e0b;
+        --error: #f87171;
+        --mut-col: #a78bfa;
+        --mono: "JetBrains Mono", monospace;
+        --ui: "Syne", sans-serif;
+      }
+      html,
+      body {
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--ui);
+        font-size: 13px;
+        overflow: hidden;
+      }
+      .app {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      .topbar {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 14px;
+        height: 42px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        z-index: 10;
+      }
+      .logo {
+        font-family: var(--mono);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--accent);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .logo-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 6px var(--accent);
+        animation: glow 2s ease-in-out infinite;
+      }
+      @keyframes glow {
+        0%,
+        100% {
+          box-shadow: 0 0 4px var(--accent);
+        }
+        50% {
+          box-shadow: 0 0 10px var(--accent);
+        }
+      }
+      .server-pill {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--muted);
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 3px 10px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .server-pill .dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--accent);
+        animation: pulse 2s infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+      .topbar-right {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .icon-btn {
+        background: none;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        border-radius: 5px;
+        padding: 4px 10px;
+        font-family: var(--mono);
+        font-size: 10px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .icon-btn:hover {
+        border-color: var(--border2);
+        color: var(--text);
+      }
+      .body {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+      }
+      .sidebar {
+        width: 200px;
+        flex-shrink: 0;
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+      }
+      .sidebar::-webkit-scrollbar {
+        width: 2px;
+      }
+      .sidebar::-webkit-scrollbar-thumb {
+        background: var(--border2);
+      }
+      .sidebar-search {
+        padding: 8px;
+        flex-shrink: 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .search-input {
+        width: 100%;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 5px 8px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text);
+        outline: none;
+      }
+      .search-input::placeholder {
+        color: var(--muted);
+      }
+      .search-input:focus {
+        border-color: var(--border2);
+      }
+      .group {
+        border-bottom: 1px solid var(--border);
+      }
+      .group-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 10px 5px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+        cursor: pointer;
+        user-select: none;
+      }
+      .group-header:hover {
+        color: var(--text);
+      }
+      .chevron {
+        font-size: 8px;
+        margin-left: auto;
+        transition: transform 0.15s;
+      }
+      .group-header.open .chevron {
+        transform: rotate(90deg);
+      }
+      .group-items {
+        padding: 2px 6px 6px;
+      }
+      .proc-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 6px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.1s;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .proc-item:hover {
+        background: var(--border);
+        color: var(--text);
+      }
+      .proc-item.active {
+        background: #00d9a312;
+        color: var(--text);
+        border-left: 2px solid var(--accent);
+        padding-left: 4px;
+      }
+      .badge {
+        font-size: 8px;
+        font-weight: 700;
+        padding: 1px 4px;
+        border-radius: 3px;
+        letter-spacing: 0.05em;
+        flex-shrink: 0;
+        width: 28px;
+        text-align: center;
+      }
+      .b-q {
+        background: #00d9a318;
+        color: var(--accent);
+      }
+      .b-m {
+        background: #a78bfa18;
+        color: var(--mut-col);
+      }
+      .b-s {
+        background: #f59e0b18;
+        color: var(--warn);
+      }
+      .playground {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .proc-bar {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface2);
+      }
+      .proc-title {
+        font-family: var(--mono);
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .proc-badge-lg {
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 4px;
+        letter-spacing: 0.06em;
+      }
+      .proc-bar-right {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .split {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        overflow: hidden;
+      }
+      .pane {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        min-height: 0;
+      }
+      .pane + .pane {
+        border-left: 1px solid var(--border);
+      }
+      .pane-header {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--border);
+        gap: 8px;
+      }
+      .pane-label {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .pane-tabs {
+        display: flex;
+        gap: 2px;
+        margin-left: auto;
+      }
+      .ptab {
+        font-size: 10px;
+        font-family: var(--mono);
+        padding: 2px 7px;
+        border-radius: 3px;
+        cursor: pointer;
+        color: var(--muted);
+        transition: all 0.1s;
+      }
+      .ptab:hover {
+        background: var(--border);
+        color: var(--text);
+      }
+      .ptab.active {
+        background: var(--border2);
+        color: var(--text);
+      }
+      .pane-body {
+        flex: 1;
+        overflow-y: auto;
+        position: relative;
+      }
+      .pane-body::-webkit-scrollbar {
+        width: 3px;
+      }
+      .pane-body::-webkit-scrollbar-thumb {
+        background: var(--border2);
+      }
+      .schema-view {
+        padding: 14px;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        line-height: 1.9;
+      }
+      .s-key {
+        color: var(--accent2);
+      }
+      .s-type {
+        color: var(--mut-col);
+      }
+      .s-req {
+        color: var(--error);
+        font-size: 9px;
+        margin-left: 4px;
+      }
+      .s-opt {
+        color: var(--muted);
+        font-size: 9px;
+        margin-left: 4px;
+      }
+      .s-brace {
+        color: var(--text);
+        opacity: 0.4;
+      }
+      .json-editor {
+        width: 100%;
+        height: 100%;
+        min-height: 180px;
+        background: transparent;
+        border: none;
+        padding: 14px;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text);
+        resize: none;
+        outline: none;
+        line-height: 1.7;
+        tab-size: 2;
+      }
+      .headers-editor {
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .header-row {
+        display: flex;
+        gap: 6px;
+      }
+      .h-input {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 5px 8px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text);
+        outline: none;
+        width: 100%;
+      }
+      .h-input:focus {
+        border-color: var(--border2);
+      }
+      .h-input::placeholder {
+        color: var(--muted);
+      }
+      .response-view {
+        padding: 14px;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        line-height: 1.8;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .j-key {
+        color: var(--accent2);
+      }
+      .j-str {
+        color: #86efac;
+      }
+      .j-num {
+        color: #fdba74;
+      }
+      .j-bool {
+        color: var(--mut-col);
+      }
+      .j-null {
+        color: var(--muted);
+      }
+      .j-brace {
+        color: var(--text);
+        opacity: 0.45;
+      }
+      .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        gap: 8px;
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .empty-icon {
+        font-size: 24px;
+        opacity: 0.3;
+      }
+      .status-bar {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 5px 12px;
+        border-top: 1px solid var(--border);
+        background: var(--surface2);
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .status-chip {
+        padding: 1px 8px;
+        border-radius: 3px;
+        font-weight: 700;
+        font-size: 10px;
+      }
+      .s-ok {
+        background: #00d9a318;
+        color: var(--accent);
+      }
+      .s-err {
+        background: #f8717118;
+        color: var(--error);
+      }
+      .s-idle {
+        background: var(--border);
+        color: var(--muted);
+      }
+      .run-btn {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 7px 18px;
+        background: var(--accent);
+        color: #050606;
+        border: none;
+        border-radius: 5px;
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+        transition:
+          opacity 0.15s,
+          transform 0.1s;
+        letter-spacing: 0.02em;
+      }
+      .run-btn:hover {
+        opacity: 0.88;
+        transform: translateY(-1px);
+      }
+      .run-btn:active {
+        transform: translateY(0);
+      }
+      .run-btn:disabled {
+        opacity: 0.4;
+        cursor: default;
+        transform: none;
+      }
+      .connect-btn {
+        padding: 7px 18px;
+        border-radius: 5px;
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+        border: 1.5px solid var(--warn);
+        background: transparent;
+        color: var(--warn);
+        transition: all 0.15s;
+        letter-spacing: 0.02em;
+      }
+      .connect-btn.live {
+        background: #f59e0b20;
+      }
+      .connect-btn:hover {
+        background: #f59e0b15;
+      }
+      .sub-feed {
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .event-row {
+        display: flex;
+        gap: 8px;
+        padding: 7px 10px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        animation: fadeUp 0.2s ease;
+      }
+      @keyframes fadeUp {
+        from {
+          opacity: 0;
+          transform: translateY(-3px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .e-ts {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--muted);
+        flex-shrink: 0;
+        padding-top: 1px;
+      }
+      .e-data {
+        font-family: var(--mono);
+        font-size: 11px;
+        word-break: break-all;
+      }
+      .history-list {
+        padding: 6px;
+      }
+      .hist-row {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 7px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.1s;
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .hist-row:hover {
+        background: var(--border);
+      }
+      .hist-name {
+        color: var(--text);
+        flex: 1;
+      }
+      .hist-time {
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .sidebar-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 20;
+      }
+      @media (max-width: 700px) {
+        .sidebar {
+          position: fixed;
+          left: -200px;
+          top: 0;
+          height: 100%;
+          z-index: 30;
+          transition: left 0.2s ease;
+          width: 220px;
+        }
+        .sidebar.open {
+          left: 0;
+        }
+        .sidebar-overlay {
+          display: block;
+        }
+        .split {
+          grid-template-columns: 1fr;
+          grid-template-rows: 1fr 1fr;
+        }
+        .pane + .pane {
+          border-left: none;
+          border-top: 1px solid var(--border);
+        }
+        .server-pill {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="topbar">
+        <button
+          class="icon-btn"
+          onclick="toggleSidebar()"
+          style="padding: 4px 8px; font-size: 13px"
+        >&#9776;</button>
+        <div class="logo">
+          <div class="logo-dot"></div>
+          go-trpc
+        </div>
+        <div class="server-pill">
+          <div class="dot"></div>
+          {{.BasePath}}
+        </div>
+        <div class="topbar-right">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--muted)">{{.Version}}</span>
+          <button class="icon-btn" onclick="clearAll()">Clear</button>
+        </div>
+      </div>
+      <div class="body">
+        <div
+          class="sidebar-overlay"
+          id="overlay"
+          onclick="closeSidebar()"
+        ></div>
+        <div class="sidebar" id="sidebar">
+          <div class="sidebar-search">
+            <input
+              class="search-input"
+              placeholder="Filter procedures..."
+              oninput="filterProcs(this.value)"
+            />
+          </div>
+          {{range .Groups}}
+          <div class="group">
+            <div class="group-header open" onclick="toggleGroup(this)">
+              {{.Namespace}} <span class="chevron">&#9654;</span>
+            </div>
+            <div class="group-items">
+              {{range .Procedures}}
+              <div
+                class="proc-item"
+                data-name="{{.Name}}"
+                data-type="{{.Type}}"
+                onclick="selectProc(this)"
+              >
+                <span class="badge {{if eq .Type "query"}}b-q{{else if eq .Type "mutation"}}b-m{{else}}b-s{{end}}">{{if eq .Type "query"}}Q{{else if eq .Type "mutation"}}M{{else}}S{{end}}</span> {{.ShortName}}
+              </div>
+              {{end}}
+            </div>
+          </div>
+          {{end}}
+        </div>
+        <div class="playground">
+          <div class="proc-bar">
+            <span class="proc-badge-lg b-q" id="bar-badge">query</span>
+            <span class="proc-title" id="bar-title">select a procedure</span>
+            <div class="proc-bar-right" id="bar-actions">
+              <button class="run-btn" id="run-btn" onclick="runProc()" disabled>&#9654; Run</button>
+            </div>
+          </div>
+          <div class="split" id="split-normal">
+            <div class="pane">
+              <div class="pane-header">
+                <span class="pane-label">Input</span>
+                <div class="pane-tabs">
+                  <div class="ptab active" onclick="switchInputTab('json', this)">JSON</div>
+                  <div class="ptab" onclick="switchInputTab('schema', this)">Schema</div>
+                  <div class="ptab" onclick="switchInputTab('headers', this)">Headers</div>
+                </div>
+              </div>
+              <div class="pane-body">
+                <div id="input-json-tab">
+                  <textarea
+                    class="json-editor"
+                    id="input-json"
+                    spellcheck="false"
+                    placeholder="{ }"
+                  ></textarea>
+                </div>
+                <div id="input-schema-tab" style="display: none">
+                  <div class="schema-view" id="schema-content"></div>
+                </div>
+                <div id="input-headers-tab" style="display: none">
+                  <div class="headers-editor">
+                    <div
+                      style="
+                        font-size: 10px;
+                        letter-spacing: 0.08em;
+                        text-transform: uppercase;
+                        color: var(--muted);
+                        margin-bottom: 4px;
+                        font-weight: 600;
+                      "
+                    >Request headers</div>
+                    <div class="header-row">
+                      <input class="h-input" placeholder="Key" value="Authorization" style="flex: 0 0 120px" />
+                      <input class="h-input" placeholder="Value" value="" />
+                    </div>
+                    <div class="header-row">
+                      <input class="h-input" placeholder="Key" style="flex: 0 0 120px" />
+                      <input class="h-input" placeholder="Value" />
+                    </div>
+                    <div class="header-row">
+                      <input class="h-input" placeholder="Key" style="flex: 0 0 120px" />
+                      <input class="h-input" placeholder="Value" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="pane">
+              <div class="pane-header">
+                <span class="pane-label">Output</span>
+                <div class="pane-tabs">
+                  <div class="ptab active" onclick="switchOutputTab('response', this)">Response</div>
+                  <div class="ptab" onclick="switchOutputTab('history', this)">History</div>
+                </div>
+              </div>
+              <div class="pane-body" id="output-response-tab">
+                <div class="response-view" id="response-body">
+                  <div class="empty-state"><div class="empty-icon">&#9676;</div><span>run a procedure to see output</span></div>
+                </div>
+              </div>
+              <div class="pane-body" id="output-history-tab" style="display: none">
+                <div class="history-list" id="history-list"></div>
+              </div>
+            </div>
+          </div>
+          <div
+            id="split-sub"
+            style="
+              display: none;
+              flex: 1;
+              flex-direction: column;
+              overflow: hidden;
+            "
+          >
+            <div
+              style="
+                padding: 12px 14px;
+                border-bottom: 1px solid var(--border);
+                display: flex;
+                gap: 10px;
+                align-items: flex-end;
+                flex-shrink: 0;
+              "
+            >
+              <div style="flex: 1">
+                <div
+                  style="
+                    font-size: 10px;
+                    letter-spacing: 0.1em;
+                    text-transform: uppercase;
+                    color: var(--muted);
+                    margin-bottom: 6px;
+                    font-weight: 600;
+                  "
+                >Input</div>
+                <textarea
+                  class="json-editor"
+                  id="sub-input"
+                  style="
+                    min-height: 56px;
+                    max-height: 80px;
+                    resize: none;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 5px;
+                    padding: 8px 10px;
+                  "
+                  spellcheck="false"
+                >{ }</textarea>
+              </div>
+              <div
+                style="
+                  display: flex;
+                  flex-direction: column;
+                  gap: 6px;
+                  align-items: flex-end;
+                "
+              >
+                <button
+                  class="connect-btn"
+                  id="connect-btn"
+                  onclick="toggleConnect()"
+                >Connect</button>
+                <span
+                  style="
+                    font-family: var(--mono);
+                    font-size: 10px;
+                    color: var(--muted);
+                  "
+                  id="event-count"
+                >0 events</span>
+              </div>
+            </div>
+            <div
+              style="
+                flex-shrink: 0;
+                padding: 5px 12px;
+                border-bottom: 1px solid var(--border);
+                background: var(--surface2);
+                display: flex;
+                gap: 8px;
+                align-items: center;
+              "
+            >
+              <span
+                style="
+                  font-size: 10px;
+                  font-weight: 600;
+                  letter-spacing: 0.1em;
+                  text-transform: uppercase;
+                  color: var(--muted);
+                "
+              >Event feed</span>
+              <button
+                class="icon-btn"
+                onclick="clearFeed()"
+                style="margin-left: auto"
+              >Clear</button>
+            </div>
+            <div style="flex: 1; overflow-y: auto" id="sub-feed">
+              <div class="sub-feed" id="sub-feed-inner"></div>
+            </div>
+          </div>
+          <div class="status-bar">
+            <span
+              class="status-chip s-idle"
+              id="status-chip"
+            >idle</span>
+            <span id="status-text">select a procedure and run it</span>
+            <span style="margin-left: auto" id="status-time"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      // -- Data (injected from server) --
+      const PROCS_LIST = {{.ProceduresJSON}};
+      const BASE_PATH = "{{.BasePath}}";
+
+      // Build lookup map
+      const PROCS = {};
+      PROCS_LIST.forEach(function(p) { PROCS[p.name] = p; });
+
+      // -- State --
+      let current = null;
+      let eventSource = null;
+      let subCount = 0;
+      let connected = false;
+
+      // -- Sidebar --
+      function toggleSidebar() {
+        document.getElementById("sidebar").classList.toggle("open");
+      }
+      function closeSidebar() {
+        document.getElementById("sidebar").classList.remove("open");
+      }
+      function toggleGroup(el) {
+        el.classList.toggle("open");
+        el.nextElementSibling.style.display = el.classList.contains("open") ? "" : "none";
+      }
+      function filterProcs(q) {
+        document.querySelectorAll(".proc-item").forEach(function(el) {
+          var name = el.dataset.name || "";
+          el.style.display = name.toLowerCase().includes(q.toLowerCase()) ? "" : "none";
+        });
+      }
+
+      // -- Select procedure --
+      function selectProc(el) {
+        document.querySelectorAll(".proc-item").forEach(function(i) { i.classList.remove("active"); });
+        el.classList.add("active");
+        loadProc(el.dataset.name, el.dataset.type);
+        closeSidebar();
+      }
+
+      function selectProcByName(name) {
+        var item = document.querySelector('.proc-item[data-name="' + name + '"]');
+        if (item) selectProc(item);
+      }
+
+      function loadProc(name, type) {
+        current = name;
+        stopConnect();
+        var p = PROCS[name];
+        var isSub = type === "subscription";
+
+        // proc bar
+        document.getElementById("bar-title").textContent = name;
+        var badge = document.getElementById("bar-badge");
+        badge.textContent = type;
+        badge.className = "proc-badge-lg " + (type === "query" ? "b-q" : type === "mutation" ? "b-m" : "b-s");
+
+        // toggle views
+        document.getElementById("split-normal").style.display = isSub ? "none" : "grid";
+        document.getElementById("split-sub").style.display = isSub ? "flex" : "none";
+        document.getElementById("bar-actions").innerHTML = isSub
+          ? '<button class="connect-btn" id="run-btn" onclick="toggleConnect()">Connect</button>'
+          : '<button class="run-btn" id="run-btn" onclick="runProc()">&#9654; Run</button>';
+
+        if (!isSub && p) {
+          document.getElementById("input-json").value = p.defaultInput;
+          renderSchema(p.schema);
+          document.getElementById("response-body").innerHTML =
+            '<div class="empty-state"><div class="empty-icon">&#9676;</div><span>run a procedure to see output</span></div>';
+        }
+        if (isSub && p) {
+          document.getElementById("sub-input").value = p.defaultInput;
+        }
+        setStatus("idle", "ready");
+      }
+
+      // -- Schema rendering --
+      function renderSchema(fields) {
+        var el = document.getElementById("schema-content");
+        if (!fields || fields.length === 0) {
+          el.innerHTML = '<span class="s-brace">{}</span> <span class="s-opt">— no input required</span>';
+          return;
+        }
+        var h = '<span class="s-brace">{</span><br>';
+        fields.forEach(function(f) {
+          h += '&nbsp;&nbsp;<span class="s-key">' + escapeHtml(f.jsonTag) + '</span>';
+          h += ' <span class="s-brace">:</span> ';
+          h += '<span class="s-type">' + escapeHtml(f.type) + '</span>';
+          if (f.type === "array" && f.elemType) {
+            h += '<span class="s-type">&lt;' + escapeHtml(f.elemType) + '&gt;</span>';
+          }
+          h += f.required
+            ? '<span class="s-req"> required</span>'
+            : '<span class="s-opt"> optional</span>';
+          h += '<br>';
+        });
+        h += '<span class="s-brace">}</span>';
+        el.innerHTML = h;
+      }
+
+      // -- Input tabs --
+      function switchInputTab(tab, el) {
+        document.querySelectorAll(".pane:first-child .ptab").forEach(function(t) { t.classList.remove("active"); });
+        el.classList.add("active");
+        document.getElementById("input-json-tab").style.display = tab === "json" ? "" : "none";
+        document.getElementById("input-schema-tab").style.display = tab === "schema" ? "" : "none";
+        document.getElementById("input-headers-tab").style.display = tab === "headers" ? "" : "none";
+      }
+
+      // -- Output tabs --
+      function switchOutputTab(tab, el) {
+        document.querySelectorAll(".pane:last-child .ptab").forEach(function(t) { t.classList.remove("active"); });
+        el.classList.add("active");
+        document.getElementById("output-response-tab").style.display = tab === "response" ? "" : "none";
+        document.getElementById("output-history-tab").style.display = tab === "history" ? "" : "none";
+      }
+
+      // -- Get custom headers --
+      function getCustomHeaders() {
+        var headers = {};
+        document.querySelectorAll(".header-row").forEach(function(row) {
+          var inputs = row.querySelectorAll(".h-input");
+          var key = inputs[0].value.trim();
+          var val = inputs[1].value.trim();
+          if (key) headers[key] = val;
+        });
+        return headers;
+      }
+
+      // -- Run procedure (htmx) --
+      function runProc() {
+        var p = PROCS[current];
+        if (!p) return;
+        var btn = document.getElementById("run-btn");
+        btn.textContent = "...";
+        btn.disabled = true;
+
+        htmx.ajax('POST', BASE_PATH + '/panel/__exec', {
+          target: '#response-body',
+          swap: 'innerHTML',
+          values: {
+            name: current,
+            input: document.getElementById("input-json").value,
+            headers: JSON.stringify(getCustomHeaders())
+          }
+        }).then(function() {
+          btn.innerHTML = '&#9654; Run';
+          btn.disabled = false;
+        });
+      }
+
+      function escapeHtml(str) {
+        var div = document.createElement("div");
+        div.appendChild(document.createTextNode(str));
+        return div.innerHTML;
+      }
+
+      // -- Subscription (real EventSource) --
+      function toggleConnect() {
+        connected ? stopConnect() : startConnect();
+      }
+
+      function startConnect() {
+        connected = true;
+        subCount = 0;
+        document.getElementById("sub-feed-inner").innerHTML = "";
+        document.getElementById("event-count").textContent = "0 events";
+
+        var btn = document.getElementById("connect-btn");
+        if (btn) { btn.textContent = "Disconnect"; btn.classList.add("live"); }
+        var barBtn = document.getElementById("run-btn");
+        if (barBtn) { barBtn.textContent = "Disconnect"; barBtn.classList.add("live"); }
+
+        setStatus("ok", "connected \u2014 listening for events");
+
+        var input = document.getElementById("sub-input").value.trim();
+        var url = BASE_PATH + "/" + current;
+        if (input && input !== "{}") {
+          url += "?input=" + encodeURIComponent(input);
+        }
+
+        eventSource = new EventSource(url);
+
+        eventSource.addEventListener("data", function(e) {
+          var data = e.data;
+          try {
+            var parsed = JSON.parse(data);
+            if (parsed.result && parsed.result.data !== undefined) {
+              data = JSON.stringify(parsed.result.data, null, 2);
+            }
+          } catch (ex) {}
+          addEvent(data);
+        });
+
+        eventSource.addEventListener("stopped", function() {
+          stopConnect();
+          setStatus("idle", "subscription ended by server");
+        });
+
+        eventSource.onerror = function() {
+          if (connected) {
+            stopConnect();
+            setStatus("err", "connection lost");
+          }
+        };
+      }
+
+      function stopConnect() {
+        connected = false;
+        if (eventSource) {
+          eventSource.close();
+          eventSource = null;
+        }
+        var btn = document.getElementById("connect-btn");
+        if (btn) { btn.textContent = "Connect"; btn.classList.remove("live"); }
+        var barBtn = document.getElementById("run-btn");
+        if (barBtn && barBtn.classList.contains("connect-btn")) {
+          barBtn.textContent = "Connect"; barBtn.classList.remove("live");
+        }
+        if (current && PROCS[current] && PROCS[current].type === "subscription") {
+          setStatus("idle", "disconnected");
+        }
+      }
+
+      function addEvent(data) {
+        subCount++;
+        document.getElementById("event-count").textContent = subCount + " events";
+        var feed = document.getElementById("sub-feed-inner");
+        var now = new Date();
+        var ts = now.toTimeString().slice(0, 8) + "." + String(now.getMilliseconds()).padStart(3, "0");
+        var row = document.createElement("div");
+        row.className = "event-row";
+        row.innerHTML = '<span class="e-ts">' + ts + '</span><span class="e-data">' + escapeHtml(data) + '</span>';
+        feed.appendChild(row);
+        feed.parentElement.scrollTop = feed.parentElement.scrollHeight;
+      }
+
+      function clearFeed() {
+        document.getElementById("sub-feed-inner").innerHTML = "";
+        subCount = 0;
+        document.getElementById("event-count").textContent = "0 events";
+      }
+
+      // -- Status bar --
+      function setStatus(state, text, time) {
+        var chip = document.getElementById("status-chip");
+        chip.textContent = state === "ok" ? "200" : state === "err" ? "error" : "idle";
+        chip.className = "status-chip " + (state === "ok" ? "s-ok" : state === "err" ? "s-err" : "s-idle");
+        document.getElementById("status-text").textContent = text || "";
+        document.getElementById("status-time").textContent = time || "";
+      }
+
+      function clearAll() {
+        document.getElementById("response-body").innerHTML =
+          '<div class="empty-state"><div class="empty-icon">&#9676;</div><span>run a procedure to see output</span></div>';
+        document.getElementById("history-list").innerHTML = "";
+        setStatus("idle", "cleared");
+      }
+
+      // Auto-select first procedure
+      (function() {
+        var first = document.querySelector(".proc-item");
+        if (first) selectProc(first);
+      })();
+    </script>
+  </body>
+</html>

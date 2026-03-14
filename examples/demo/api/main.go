@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 
@@ -19,9 +18,14 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// Serve static files if /static directory exists (production Docker build)
+	// Serve static files if /static directory exists (production Docker build),
+	// otherwise redirect root to the playground panel.
 	if info, err := os.Stat("/static"); err == nil && info.IsDir() {
 		mux.Handle("/", http.FileServer(http.Dir("/static")))
+	} else {
+		mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+			http.Redirect(w, req, "/trpc/panel", http.StatusTemporaryRedirect)
+		})
 	}
 
 	// tRPC API
@@ -32,7 +36,6 @@ func main() {
 		port = "8080"
 	}
 
-	r.PrintRoutes("/trpc")
-	fmt.Printf("go-trpc chat demo running on http://localhost:%s\n", port)
+	r.PrintRoutes("/trpc", ":"+port)
 	http.ListenAndServe(":"+port, mux)
 }

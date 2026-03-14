@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/sebasusnik/go-trpc/examples/demo/api/app"
@@ -16,8 +15,13 @@ func main() {
 		AllowedHeaders: []string{"Content-Type", "Authorization"},
 	})
 
-	fmt.Println("go-trpc chat demo running on http://localhost:8080")
-	r.PrintRoutes("/trpc")
+	mux := http.NewServeMux()
+	mux.Handle("/trpc/", r.Handler())
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		http.Redirect(w, req, "/trpc/panel", http.StatusTemporaryRedirect)
+	})
 
-	http.ListenAndServe(":8080", r.Handler())
+	r.PrintRoutes("/trpc", ":8080")
+
+	http.ListenAndServe(":8080", mux)
 }

@@ -1,6 +1,9 @@
 package router
 
-import "context"
+import (
+	"context"
+	"reflect"
+)
 
 // ProcedureType is the type of a tRPC procedure.
 type ProcedureType string
@@ -40,4 +43,21 @@ type procedure struct {
 	Handler             Handler             // for query/mutation
 	SubscriptionHandler SubscriptionHandler // for subscription
 	middlewares         []Middleware         // procedure-level middlewares
+	InputType           reflect.Type        // reflect.Type of the input parameter
+	OutputType          reflect.Type        // reflect.Type of the output parameter
+}
+
+// ProcedureInfo exposes metadata about a registered procedure for tooling.
+type ProcedureInfo struct {
+	Name       string
+	Type       ProcedureType
+	InputType  reflect.Type
+	OutputType reflect.Type
+}
+
+// Validator is an optional interface that input structs can implement
+// to perform validation after JSON unmarshaling but before the handler.
+// Return a *TRPCError to control the error code, or any error for BAD_REQUEST.
+type Validator interface {
+	Validate() error
 }
