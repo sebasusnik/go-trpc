@@ -3,6 +3,8 @@ package router_test
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -93,6 +95,59 @@ func TestProcedures(t *testing.T) {
 	for _, name := range []string{"ping", "create", "events"} {
 		if _, ok := procs[name]; !ok {
 			t.Errorf("expected procedure %q to be registered", name)
+		}
+	}
+}
+
+func TestMergePropagatesmiddlewares(t *testing.T) {
+	// Track middleware execution order
+	var order []string
+
+	mwA := func(next router.Handler) router.Handler {
+		return func(ctx context.Context, req router.Request) (interface{}, error) {
+			order = append(order, "A")
+			return next(ctx, req)
+		}
+	}
+	mwB := func(next router.Handler) router.Handler {
+		return func(ctx context.Context, req router.Request) (interface{}, error) {
+			order = append(order, "B")
+			return next(ctx, req)
+		}
+	}
+	mwC := func(next router.Handler) router.Handler {
+		return func(ctx context.Context, req router.Request) (interface{}, error) {
+			order = append(order, "C")
+			return next(ctx, req)
+		}
+	}
+
+	// Child router with Use() middleware
+	child := router.NewRouter(router.WithLogger(router.NopLogger))
+	child.Use(mwA)
+	router.Query(child, "ping", func(ctx context.Context, _ struct{}) (string, error) {
+		order = append(order, "handler")
+		return "pong", nil
+	}, router.WithMiddleware(mwB))
+
+	// Parent router with its own Use() middleware
+	parent := router.NewRouter(router.WithLogger(router.NopLogger))
+	parent.Use(mwC)
+	parent.Merge("svc", child)
+
+	// Call the merged procedure through the handler
+	req, _ := http.NewRequest("GET", "/trpc/svc.ping", nil)
+	w := httptest.NewRecorder()
+	parent.ServeHTTP(w, req)
+
+	// Expected order: parent.Use(C) → child.Use(A) → procedure(B) → handler
+	expected := []string{"C", "A", "B", "handler"}
+	if len(order) != len(expected) {
+		t.Fatalf("expected %d calls, got %d: %v", len(expected), len(order), order)
+	}
+	for i, v := range expected {
+		if order[i] != v {
+			t.Errorf("step %d: expected %q, got %q (full order: %v)", i, v, order[i], order)
 		}
 	}
 }

@@ -85,15 +85,27 @@ func (r *Router) WithCORS(cfg CORSConfig) {
 }
 
 // Merge merges another router's procedures under a namespace prefix.
+// Router-level middlewares from the child router (set via Use()) are
+// propagated: they are prepended to each procedure's middleware chain
+// so the execution order becomes parent.Use → child.Use → procedure-level → handler.
 func (r *Router) Merge(prefix string, other *Router) {
 	for name, proc := range other.procedures {
 		fullName := prefix + "." + name
+
+		// Combine child router middlewares + procedure middlewares
+		var mws []Middleware
+		if len(other.middlewares) > 0 || len(proc.middlewares) > 0 {
+			mws = make([]Middleware, 0, len(other.middlewares)+len(proc.middlewares))
+			mws = append(mws, other.middlewares...)
+			mws = append(mws, proc.middlewares...)
+		}
+
 		r.procedures[fullName] = &procedure{
 			Name:                fullName,
 			Type:                proc.Type,
 			Handler:             proc.Handler,
 			SubscriptionHandler: proc.SubscriptionHandler,
-			middlewares:         proc.middlewares,
+			middlewares:         mws,
 			InputType:           proc.InputType,
 			OutputType:          proc.OutputType,
 		}
