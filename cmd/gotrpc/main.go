@@ -101,6 +101,7 @@ If no path argument is given, reads configuration from gotrpc.json in the curren
 
 	rootCmd.AddCommand(generateCmd)
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(createCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

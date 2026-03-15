@@ -77,8 +77,21 @@
 - [x] **CLI: smart project detection** — Auto-detect `src/` layout, use configured router name in templates
 - [x] **Automated versioning** — Version from git tags (ldflags) or `runtime/debug.ReadBuildInfo()`, no manual edits
 
-### v0.6 — Future
+### v0.6 — The Go T3 Stack ✨ (in progress)
+
+- [x] **`gotrpc create`** — Full-stack project scaffolding CLI, à la `create-t3-app`
+- [x] **React + Vite + Tailwind** — Modern frontend with typesafe tRPC client pre-configured
+- [x] **`--auth` flag** — Optional JWT authentication middleware scaffolding
+- [x] **`--db` flag** — Optional database layer with sqlc (PostgreSQL) + migrations
+- [x] **`--ws` flag** — Optional WebSocket subscription support (splitLink + wsLink)
+- [x] **Makefile + Docker** — `make dev` starts backend + frontend + codegen watcher, Dockerfile for production
+- [x] **docker-compose** — Full dev environment with PostgreSQL (when `--db` is used)
+
+### v0.7 — Future
 
 - [ ] **Codegen: generic type improvements** — Better handling of edge cases in generic struct mapping
 - [ ] **OpenTelemetry: WebSocket spans** — Trace individual WebSocket subscription lifecycles
 - [ ] **Adapter improvements** — WebSocket support in Lambda (via API Gateway WebSocket API) and Cloudflare (Durable Objects)
+- [ ] **`gotrpc create --next`** — Next.js frontend option as alternative to Vite
+- [ ] **`gotrpc create --drizzle`** — Drizzle ORM option for TypeScript-first database layer
+- [ ] **React Query integration** — Scaffold `@trpc/react-query` setup in `gotrpc create`
