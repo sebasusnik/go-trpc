@@ -12,8 +12,11 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize go-trpc in the current project",
-	Long:  "Creates gotrpc.json config and scaffolds the TypeScript client setup.",
+	Short: "Add go-trpc to an existing project",
+	Long: `Add go-trpc to an existing project. Creates gotrpc.json config, a tRPC
+client file, and the generated types directory.
+
+Use "gotrpc create" instead to scaffold a new full-stack project from scratch.`,
 	RunE:  runInit,
 }
 

@@ -12,8 +12,8 @@ import (
 
 var createCmd = &cobra.Command{
 	Use:   "create <project-name>",
-	Short: "Create a full-stack go-trpc project (the Go T3 stack)",
-	Long: `Scaffolds a complete full-stack project with:
+	Short: "Scaffold a new full-stack go-trpc project from scratch",
+	Long: `Scaffold a new full-stack project from scratch with:
   • Go backend with go-trpc, structured handlers, and nethttp adapter
   • React + Vite + TypeScript frontend with Tailwind CSS
   • tRPC client pre-configured with type generation
@@ -23,7 +23,9 @@ var createCmd = &cobra.Command{
 Optional features:
   --ws     WebSocket subscriptions (splitLink + wsLink)
   --auth   Authentication middleware with JWT helpers
-  --db     Database layer with sqlc (PostgreSQL)`,
+  --db     Database layer with sqlc (PostgreSQL)
+
+Use "gotrpc init" instead to add go-trpc to an existing project.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runCreate,
 }
