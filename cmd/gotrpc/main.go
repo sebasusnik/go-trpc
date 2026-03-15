@@ -21,14 +21,25 @@ func main() {
 	var dryRun bool
 
 	rootCmd := &cobra.Command{
-		Use:     "gotrpc",
-		Short:   "go-trpc CLI - tRPC code generation for Go",
+		Use:   "gotrpc",
+		Short: "go-trpc CLI — end-to-end typesafe APIs with Go + TypeScript",
+		Long: `go-trpc CLI — end-to-end typesafe APIs with Go + TypeScript.
+
+Getting started:
+  gotrpc create my-app     Scaffold a new full-stack project
+  gotrpc init              Add go-trpc to an existing project
+
+Development:
+  gotrpc generate          Generate TypeScript types from Go handlers
+  gotrpc generate --watch  Re-generate on file changes
+
+Learn more: https://github.com/sebasusnik/go-trpc`,
 		Version: Version,
 	}
 
 	generateCmd := &cobra.Command{
 		Use:   "generate [path]",
-		Short: "Generate TypeScript types from Go tRPC definitions",
+		Short: "Generate TypeScript types from Go handlers",
 		Long: `Parses Go source files to find gotrpc.Query() and gotrpc.Mutation() calls,
 extracts the input/output types, and generates a .d.ts file compatible with @trpc/client.
 
